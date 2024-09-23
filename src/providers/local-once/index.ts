@@ -47,13 +47,13 @@ class LocalOnceProvider implements faas.ProviderPlugin {
     // assert(workflow.runtime === 'nodejs')
 
     const inputJSON = JSON.stringify(inputData)
-    if (inputJSON.length < 100) {
-      logger.info(`running workflow locally, use input=${inputJSON}`)
-    } else {
-      logger.info(`running workflow locally`)
-    }
+    // if (inputJSON.length < 100) {
+    //   logger.info(`running workflow locally, use input=${inputJSON}`)
+    // } else {
+    //   logger.info(`running workflow locally`)
+    // }
     const output = await this.executeFunction(ctx, '__executor', workflow.codeDir, inputData, workflow.runtime)
-    logger.info(`workflow executed, output=${JSON.stringify(output, undefined, 2)}`)
+    logger.info(`workflow executed, output=${JSON.stringify(output)}`)
   }
 
   async deployFunction(ctx: faas.ProviderPluginContext, inputData: unknown, fn: faas.Function) {
@@ -64,9 +64,9 @@ class LocalOnceProvider implements faas.ProviderPlugin {
     logger.info(`function executed, output=${JSON.stringify(output)}`)
   }
 
-  async executeFunction(ctx: faas.ProviderPluginContext, name:string, codeDir:string, inputData: unknown, runtime: string) {
-    
-    switch(runtime) {
+  async executeFunction(ctx: faas.ProviderPluginContext, name: string, codeDir: string, inputData: unknown, runtime: string) {
+
+    switch (runtime) {
       case 'nodejs':
         return this.executeJsCode(ctx, name, codeDir, inputData)
       case 'python':
@@ -76,7 +76,7 @@ class LocalOnceProvider implements faas.ProviderPlugin {
     }
   }
 
-  async executePyCode(ctx: faas.ProviderPluginContext, name:string,  codeDir: string, inputData: unknown) {
+  async executePyCode(ctx: faas.ProviderPluginContext, name: string, codeDir: string, inputData: unknown) {
     process.env.FAASIT_PROVIDER = 'local-once'
     process.env.FAASIT_FUNC_NAME = name
     process.env.FAASIT_WORKFLOW_FUNC_NAME = name
@@ -99,23 +99,28 @@ loop.run_until_complete(main())
 loop.close()
     `.trim()
     // console.log(pythonCode)
-    
-    const output = await new Promise((resolve, reject) => {
-      const python = spawn('python', ["-c", pythonCode], {cwd: dir})  
 
-      let data = ''
-      python.stdout.on('data', (chunk) => {
-        data += chunk
-      })
-      python.stderr.on('data', (chunk) => {
-        console.log(chunk.toString())
-        reject(chunk.toString())
-      })
-      python.on('close', () => {
-        resolve(data)
-      })
+    const proc = ctx.rt.runCommand(`python`, {
+      args: ['-c', pythonCode],
+      cwd: dir,
+      stdio: 'inherit'
     })
-    return output
+
+    let result = ''
+    await Promise.all([
+      proc.readOut(v => {
+        console.log(v)
+        result = v.replace(/\\n/g, '\n')
+      }),
+      proc.readErr(v => {
+        console.log(v)
+      }),
+    ])
+
+    await proc.wait()
+
+    // console.log(result)
+    return result
   }
 
   async executeJsCode(ctx: faas.ProviderPluginContext, name: string, codeDir: string, inputData: unknown) {
