@@ -15,7 +15,7 @@ export class AliyunFunction {
   }) {
     const region = 'cn-hangzhou'
     const accountId = process.env.FAASIT_SECRET_ALIYUN_ACCOUNT_ID
-    const version = '11'
+    const version = '21'
     const layer_name = 'ft-rt-py'
     this.layer = `acs:fc:${region}:${accountId}:layers/${layer_name}/versions/${version}`
   }
