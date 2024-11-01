@@ -63,7 +63,6 @@ class K8sProvider implements faas.ProviderPlugin {
     //   : this.getServiceClusterIP(svcName,logger)
     const ip = await this.getServiceClusterIP(svcName,logger)
     const url = `http://${ip}:80`
-    logger.info(url);
     // 不使用代理发送请求
     const axiosInstance = axios.create()
     const data = { event: input?.input || {}, metadata: {} }
@@ -160,7 +159,6 @@ class K8sProvider implements faas.ProviderPlugin {
     const { rt, logger } = p.ctx
 
     logger.info(`  > deploy function ${fnParams.name}`)
-    logger.info(`codeDir: ${fnParams.codeDir}`)
 
     let imageName = 'faasit-python-runtime:0.0.2'
     let runCommand: String[] = []
@@ -297,7 +295,6 @@ class K8sProvider implements faas.ProviderPlugin {
   }
 
   async applyResources(resources: any[],logger : PluginLogger) {
-    logger.info(`${resources.length}`)
     for (const resource of resources) {
       const namespace = resource.metadata?.namespace || 'default';
       const name = resource.metadata?.name;
