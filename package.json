@@ -73,6 +73,10 @@
     "./generators/nodejs": {
       "require": "./dist/generators/nodejs.cjs",
       "import": "./dist/generators/nodejs.mjs"
+    },
+    "./providers/pku": {
+      "require": "./dist/providers/pku.cjs",
+      "import": "./dist/providers/pku.mjs"
     }
   }
 }
