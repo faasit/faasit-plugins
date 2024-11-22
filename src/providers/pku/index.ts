@@ -1,6 +1,7 @@
 import {faas} from '@faasit/std'
-import { error } from 'console'
 import yaml from 'js-yaml'
+import path from 'path'
+import fs from 'fs'
 
 interface stage {
     name: string,
@@ -60,6 +61,7 @@ print(output)
 
     generate_app_yaml(app_name:string ,stages: stage[]) {
         let stage_profiles: { [key: string]: any } = {};
+        let image_coldstart_latency: { [key: string]: number } = {};
         let port: number = 10000
         for (const stage of stages) {
             const name = stage.name
@@ -79,33 +81,50 @@ print(output)
                 image: stage.image,
                 codeDir: stage.codeDir,
                 command: '["/bin/bash"]',
-                args: `["-c", "cd / && PYTHONPATH=\${PYTHONPATH}:/serverless-framework:/packages python3 /serverless-framework/worker.py /code/index.py handler --port __worker-port__ --parallelism __parallelism__ --cache_server_port __cache-server-port__ --debug"]`
-            }
-            let stage_obj = {
-                [name]: _stage
+                args: `["-c", "cd / && python3 -m serverless-framework.worker /code/index.py handler --port __worker-port__ --parallelism __parallelism__ --cache_server_port __cache-server-port__ --debug"]`
             }
             // stage_obj.set(name, _stage)
             stage_profiles[name] = _stage
+            image_coldstart_latency[stage.image] = 2.0
         }
 
         const app_yaml = {
             app_name: app_name,
-            template: `${process.cwd()}/template.yaml`,
+            template: `${path.dirname(__filename)}/template.yaml`,
             node_resources: {
                 cloud: {
                     vcpu: 20
                 }
             },
-            image_coldstart_latency: {
-                ['faasit-spilot:0.1']: 2.0
-            },
-            knative_template: `${process.cwd()}/knative-template.yaml`,
+            image_coldstart_latency: image_coldstart_latency,
+            knative_template: `${path.dirname(__filename)}/knative-template.yaml`,
             external_ip: "10.0.0.234",
             stage_profiles: stage_profiles,
             // default_params: inputExample,
         }
         return yaml.dump(app_yaml)
 
+    }
+
+    async build_docker_image(baseImageName:string,imageName: string,codeDir:string,ctx: faas.ProviderPluginContext) {
+        const {rt,logger} = ctx
+        logger.info(`Building docker image ${imageName}`)
+        let build_commands = []
+        build_commands.push(`FROM ${baseImageName}`)
+        build_commands.push(`COPY ${codeDir} /code`)
+        build_commands.push(`WORKDIR /code`)
+        if (fs.existsSync(path.join(codeDir, 'requirements.txt'))) {
+            build_commands.push(`COPY ${path.join(codeDir, 'requirements.txt')} /requirements.txt`)
+            build_commands.push(`RUN pip install -r /requirements.txt`)
+        }
+        const dockerfile = build_commands.join('\n')
+        await rt.writeFile(`${imageName}.dockerfile`, dockerfile)
+        const proc = rt.runCommand('docker', {
+            args: ['build','--no-cache','-t',imageName,'-f',`${imageName}.dockerfile`,'.'],
+            cwd: process.cwd(),
+            stdio: 'inherit'
+        })
+        await proc.wait()
     }
 
     async deploy(input: faas.ProviderDeployInput, ctx: faas.ProviderPluginContext) {
@@ -120,15 +139,17 @@ print(output)
             let stages = new Array<stage>()
             for (const fnRef of app.output.workflow.value.output.functions) {
                 const fn = fnRef.value
+                const fn_image_name = `${image}-${fn.$ir.name}`
                 const stage: stage = {
                     name: fn.$ir.name,
                     request: {
                         vcpu: fn.output.resource? parseInt(fn.output.resource.cpu) : 1
                     },
-                    image: image,
+                    image: fn_image_name,
                     codeDir: fn.output.codeDir
                 }
                 stages.push(stage)
+                await this.build_docker_image(image, fn_image_name, fn.output.codeDir, ctx)
             }
             let app_yaml = this.generate_app_yaml(app.$ir.name, stages)
             let dag_yaml = await this.python_generate_dag(app.output.workflow.value.output.codeDir, ctx)
@@ -142,7 +163,7 @@ print(output)
                     '--job',
                     app.$ir.name,
                 ],
-                cwd: ctx.cwd,
+                cwd: path.dirname(__filename),
                 stdio: 'inherit'
             })
             await Promise.all([

@@ -143,50 +143,59 @@ def deploy(path: str, job: str):
                          files={"file": open(tmp_file_name, "rb")},
                          stream=True)
     log.debug(resp.text)
-    if resp.status_code == 200:
-        # os.remove(tmp_file_name)
-        resp_json = resp.json()
-        cli_id = resp_json["data"]["cli_id"]
-        log.debug("cli_id: {}".format(cli_id))
-        status = ""
-        while True:
-            _token = _get_token()
-            if _token is None:
-                click.echo("Login failed, exit. Please re-login and retry.")
-                exit()
-            status_resp = requests.get(f"{CONFIG.base_url}/cli/status/{cli_id}",
-                                       headers={
-                                           'Authorization': 'Bearer ' + _get_token(),
-                                       })
-            status_resp_json = status_resp.json()
-            if "data" not in status_resp_json or "status" not in status_resp_json["data"]:
-                raise Exception("Error in communication between local and server. Please try it again.")
-            new_status = status_resp.json()["data"]["status"]
-            print(status_resp_json)
-            if status != new_status:
-                if "build_msg" in status_resp_json["data"] and status_resp_json["data"]["build_msg"] != None:
-                    click.echo("Deploying model msg: {}".format(status_resp_json["data"]["build_msg"]))
-                status = new_status
-                click.echo("Deploying model status: {}".format(status))
-            time.sleep(2)
-            if status in ['stopped', 'error']:
-                break
-        if status == 'error':
-            click.echo("Deploying model to Serverless Pilot faild! Please check the previous error messages.")
-            return
-        click.echo("Deploying model to Serverless Pilot successfully")
-        click.echo("----------------------------------------")
-        orch_id_resp = requests.get(f"{CONFIG.base_url}/cli/{cli_id}/orch_id",
+    while resp.status_code != 200:
+        click.echo("upload orch faild. Relogin and retry.")
+        _login()
+        resp = requests.post(CONFIG.base_url + "/cli/deploy",
+                         headers={
+                             'Authorization': 'Bearer ' + _get_token(),
+                         },
+                         data={'job_name': job},
+                         files={"file": open(tmp_file_name, "rb")},
+                         stream=True)
+        log.debug(resp.text)
+    # os.remove(tmp_file_name)
+    resp_json = resp.json()
+    cli_id = resp_json["data"]["cli_id"]
+    log.debug("cli_id: {}".format(cli_id))
+    status = ""
+    while True:
+        _token = _get_token()
+        if _token is None:
+            click.echo("Login failed, exit. Please re-login and retry.")
+            exit()
+        status_resp = requests.get(f"{CONFIG.base_url}/cli/status/{cli_id}",
                                     headers={
                                         'Authorization': 'Bearer ' + _get_token(),
                                     })
-        log.debug(orch_id_resp.json())
-        orch_id = orch_id_resp.json()["data"]["orch_id"]
-        click.echo(
-            f'Please visit the following address: "{CONFIG.deploy_url}". Once there, select the task "{orch_id}" labeled as "profiling".')
-        # webbrowser.open(f"{CONFIG.deploy_url}?orch_id={orch_id}")
-    else:
-        click.echo("upload orch faild.")
+        status_resp_json = status_resp.json()
+        if "data" not in status_resp_json or "status" not in status_resp_json["data"]:
+            raise Exception("Error in communication between local and server. Please try it again.")
+        new_status = status_resp.json()["data"]["status"]
+        print(status_resp_json)
+        if status != new_status:
+            if "build_msg" in status_resp_json["data"] and status_resp_json["data"]["build_msg"] != None:
+                click.echo("Deploying model msg: {}".format(status_resp_json["data"]["build_msg"]))
+            status = new_status
+            click.echo("Deploying model status: {}".format(status))
+        time.sleep(2)
+        if status in ['stopped', 'error']:
+            break
+    if status == 'error':
+        click.echo("Deploying model to Serverless Pilot faild! Please check the previous error messages.")
+        return
+    click.echo("Deploying model to Serverless Pilot successfully")
+    click.echo("----------------------------------------")
+    orch_id_resp = requests.get(f"{CONFIG.base_url}/cli/{cli_id}/orch_id",
+                                headers={
+                                    'Authorization': 'Bearer ' + _get_token(),
+                                })
+    log.debug(orch_id_resp.json())
+    orch_id = orch_id_resp.json()["data"]["orch_id"]
+    click.echo(
+        f'Please visit the following address: "{CONFIG.deploy_url}". Once there, select the task "{orch_id}" labeled as "profiling".')
+    # webbrowser.open(f"{CONFIG.deploy_url}?orch_id={orch_id}")
+        
 
 
 if __name__ == "__main__":
