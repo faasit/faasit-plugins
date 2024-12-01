@@ -183,6 +183,11 @@ print(output)
     }
     async invoke(input: faas.ProviderInvokeInput, ctx: faas.ProviderPluginContext) {
         const {app} = input
+        let redis_preload_folder = ''
+        if (app.output.opts) {
+            redis_preload_folder = `${process.cwd()}/${app.output.opts['redis_preload_folder']}`
+        }
+        console.log(`Redis folder: ${redis_preload_folder}`)
         const pythonCode = `
 import os
 import sys
@@ -190,7 +195,7 @@ sys.path.append('${app.output.workflow?.value.output.codeDir}')
 os.environ["FAASIT_PROVIDER"]="pku"
 from index import handler
 output,invoke = handler()
-invoke('${process.cwd()}/${app.$ir.name}.yaml','${process.cwd()}/Redis')
+invoke('${process.cwd()}/${app.$ir.name}.yaml','${redis_preload_folder}')
     `.trim()
         const proc = ctx.rt.runCommand(`python`, {
             args: ['-c', pythonCode],
