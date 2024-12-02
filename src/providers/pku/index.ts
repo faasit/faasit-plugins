@@ -81,7 +81,7 @@ print(output)
                 image: stage.image,
                 codeDir: stage.codeDir,
                 command: '["/bin/bash"]',
-                args: `["-c", "cd / && python3 -m serverless-framework.worker /code/index.py handler --port __worker-port__ --parallelism __parallelism__ --cache_server_port __cache-server-port__ --debug"]`
+                args: `["-c", "cd / && python3 -m serverless_framework.worker /code/index.py handler --port __worker-port__ --parallelism __parallelism__ --cache_server_port __cache-server-port__ --debug"]`
             }
             // stage_obj.set(name, _stage)
             stage_profiles[name] = _stage
@@ -139,7 +139,7 @@ print(output)
             let stages = new Array<stage>()
             for (const fnRef of app.output.workflow.value.output.functions) {
                 const fn = fnRef.value
-                const fn_image_name = `${image}-${fn.$ir.name}`
+                const fn_image_name = `${job_name}-${fn.$ir.name}:tmp`
                 const stage: stage = {
                     name: fn.$ir.name,
                     request: {
