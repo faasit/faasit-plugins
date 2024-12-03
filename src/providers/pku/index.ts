@@ -15,6 +15,30 @@ interface stage {
 class PKUProvider implements faas.ProviderPlugin {
     name: string = 'pku'
 
+    async build(input: faas.ProviderDeployInput, ctx: faas.ProviderPluginContext) {
+        const {app} = input
+        const {rt, logger} = ctx
+        if (app.output.workflow) {
+            const job_name = app.$ir.name
+            const image = 'faasit-spilot:0.2'
+            let stages = new Array<stage>()
+            for (const fnRef of app.output.workflow.value.output.functions) {
+                const fn = fnRef.value
+                const fn_image_name = `${job_name}-${fn.$ir.name}:tmp`
+                const stage: stage = {
+                    name: fn.$ir.name,
+                    request: {
+                        vcpu: fn.output.resource? parseInt(fn.output.resource.cpu) : 1
+                    },
+                    image: fn_image_name,
+                    codeDir: fn.output.codeDir
+                }
+                stages.push(stage)
+                await this.build_docker_image(image, fn_image_name, fn.output.codeDir, ctx)
+            }
+        }
+    }
+
 
     generate_spilot_yaml(job_name:string, image:string) {
         const spilot_yaml = {
@@ -149,7 +173,7 @@ print(output)
                     codeDir: fn.output.codeDir
                 }
                 stages.push(stage)
-                await this.build_docker_image(image, fn_image_name, fn.output.codeDir, ctx)
+                // await this.build_docker_image(image, fn_image_name, fn.output.codeDir, ctx)
             }
             let app_yaml = this.generate_app_yaml(app.$ir.name, stages)
             let dag_yaml = await this.python_generate_dag(app.output.workflow.value.output.codeDir, ctx)
