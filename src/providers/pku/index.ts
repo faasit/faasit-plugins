@@ -133,7 +133,7 @@ print(output)
         logger.info("Deploying app to pku")
         if (app.output.workflow) {
             const job_name = app.$ir.name
-            const image = 'faasit-spilot:0.1'
+            const image = 'faasit-spilot:0.2'
             const spilot_yaml = this.generate_spilot_yaml(job_name, image)
             await rt.writeFile('.spilot.yaml', spilot_yaml)
             let stages = new Array<stage>()
@@ -188,17 +188,19 @@ print(output)
             redis_preload_folder = `${process.cwd()}/${app.output.opts['redis_preload_folder']}`
         }
         console.log(`Redis folder: ${redis_preload_folder}`)
-        const pythonCode = `
-import os
-import sys
-sys.path.append('${app.output.workflow?.value.output.codeDir}')
-os.environ["FAASIT_PROVIDER"]="pku"
-from index import handler
-output,invoke = handler()
-invoke('${process.cwd()}/${app.$ir.name}.yaml','${redis_preload_folder}')
-    `.trim()
         const proc = ctx.rt.runCommand(`python`, {
-            args: ['-c', pythonCode],
+            args: [
+                '-m',
+                'serverless_framework.controller',
+                '--repeat',
+                '1',
+                '--launch',
+                'tradition',
+                '--transmode',
+                'allTCP',
+                '--profile',
+                `${process.cwd()}/${app.$ir.name}.yaml`
+            ],
             cwd: ctx.cwd,
             stdio: 'inherit'
         })
