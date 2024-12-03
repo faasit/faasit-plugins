@@ -24,7 +24,7 @@ class PKUProvider implements faas.ProviderPlugin {
             let stages = new Array<stage>()
             for (const fnRef of app.output.workflow.value.output.functions) {
                 const fn = fnRef.value
-                const fn_image_name = `${job_name}-${fn.$ir.name}:tmp`
+                const fn_image_name = `localhost:5000/${job_name}-${fn.$ir.name}:tmp`
                 const stage: stage = {
                     name: fn.$ir.name,
                     request: {
@@ -212,19 +212,24 @@ print(output)
             redis_preload_folder = `${process.cwd()}/${app.output.opts['redis_preload_folder']}`
         }
         console.log(`Redis folder: ${redis_preload_folder}`)
+        let com_args = [
+            '-m',
+            'serverless_framework.controller',
+            '--repeat',
+            '1',
+            '--launch',
+            'tradition',
+            '--transmode',
+            'allTCP',
+            '--profile',
+            `${process.cwd()}/${app.$ir.name}.yaml`
+        ]
+        if (redis_preload_folder) {
+            com_args.push('--redis_preload_folder')
+            com_args.push(redis_preload_folder)
+        }
         const proc = ctx.rt.runCommand(`python`, {
-            args: [
-                '-m',
-                'serverless_framework.controller',
-                '--repeat',
-                '1',
-                '--launch',
-                'tradition',
-                '--transmode',
-                'allTCP',
-                '--profile',
-                `${process.cwd()}/${app.$ir.name}.yaml`
-            ],
+            args: com_args,
             cwd: ctx.cwd,
             stdio: 'inherit'
         })
