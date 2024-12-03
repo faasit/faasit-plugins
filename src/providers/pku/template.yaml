@@ -35,17 +35,7 @@ spec:
       - name: spilot-redis-config
         readOnly: true
         mountPath: "/etc/spilot-redis-config"
-      - name: spilot-user-code
-        mountPath: "/code"
-      - name: faasit-runtime
-        mountPath: "/packages"
   volumes:
   - name: spilot-redis-config
     secret:
       secretName: spilot-redis-config
-  - name: spilot-user-code
-    hostPath:
-      path: __host-path__
-  - name: faasit-runtime
-    hostPath:
-      path: __cwd__/packages
