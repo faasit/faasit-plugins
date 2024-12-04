@@ -9,7 +9,8 @@ interface stage {
         vcpu: number,
     }
     image: string,
-    codeDir: string
+    codeDir: string,
+    replicas: number
 }
 
 class PKUProvider implements faas.ProviderPlugin {
@@ -21,19 +22,9 @@ class PKUProvider implements faas.ProviderPlugin {
         if (app.output.workflow) {
             const job_name = app.$ir.name
             const image = 'faasit-spilot:0.2'
-            let stages = new Array<stage>()
             for (const fnRef of app.output.workflow.value.output.functions) {
                 const fn = fnRef.value
                 const fn_image_name = `${job_name}-${fn.$ir.name}:tmp`
-                const stage: stage = {
-                    name: fn.$ir.name,
-                    request: {
-                        vcpu: fn.output.resource? parseInt(fn.output.resource.cpu) : 1
-                    },
-                    image: fn_image_name,
-                    codeDir: fn.output.codeDir
-                }
-                stages.push(stage)
                 await this.build_docker_image(image, fn_image_name, fn.output.codeDir, ctx)
             }
         }
@@ -88,27 +79,35 @@ print(output)
         let image_coldstart_latency: { [key: string]: number } = {};
         let port: number = 10000
         for (const stage of stages) {
-            const name = stage.name
-            const _stage = {
-                request: {
-                    vcpu: stage.request.vcpu
-                },
-                input_time: 0,
-                compute_time: 0,
-                output_time: 0,
-                worker_external_port: port++,
-                cache_server_external_port: port++,
-                worker_port: port++,
-                cache_server_port: port++,
-
-                parallelism: 4,
-                image: stage.image,
-                codeDir: stage.codeDir,
-                command: '["/bin/bash"]',
-                args: `["-c", "cd / && python3 -m serverless_framework.worker /code/index.py handler --port __worker-port__ --parallelism __parallelism__ --cache_server_port __cache-server-port__ --debug"]`
+            const _stage_generator = () => {
+                return {
+                    request: {
+                        vcpu: stage.request.vcpu
+                    },
+                    input_time: 0,
+                    compute_time: 0,
+                    output_time: 0,
+                    worker_external_port: port++,
+                    cache_server_external_port: port++,
+                    worker_port: port++,
+                    cache_server_port: port++,
+                    
+                    parallelism: 4,
+                    image: stage.image,
+                    codeDir: stage.codeDir,
+                    command: '["/bin/bash"]',
+                    args: `["-c", "cd / && python3 -m serverless_framework.worker /code/index.py handler --port __worker-port__ --parallelism __parallelism__ --cache_server_port __cache-server-port__ --debug"]`
+                }
             }
-            // stage_obj.set(name, _stage)
-            stage_profiles[name] = _stage
+            if (stage.replicas > 1) {
+                for (let i = 0; i < stage.replicas; i++) {
+                    const name = `${stage.name}-${i}`
+                    stage_profiles[name] = _stage_generator()
+                }
+            } else {
+                const name = stage.name
+                stage_profiles[name] = _stage_generator()
+            }
             image_coldstart_latency[stage.image] = 2.0
         }
 
@@ -170,7 +169,8 @@ print(output)
                         vcpu: fn.output.resource? parseInt(fn.output.resource.cpu) : 1
                     },
                     image: fn_image_name,
-                    codeDir: fn.output.codeDir
+                    codeDir: fn.output.codeDir,
+                    replicas: fn.output.replicas? fn.output.replicas:1
                 }
                 stages.push(stage)
                 // await this.build_docker_image(image, fn_image_name, fn.output.codeDir, ctx)
