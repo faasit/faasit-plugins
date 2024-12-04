@@ -24,7 +24,7 @@ class PKUProvider implements faas.ProviderPlugin {
             let stages = new Array<stage>()
             for (const fnRef of app.output.workflow.value.output.functions) {
                 const fn = fnRef.value
-                const fn_image_name = `localhost:5000/${job_name}-${fn.$ir.name}:tmp`
+                const fn_image_name = `${job_name}-${fn.$ir.name}:tmp`
                 const stage: stage = {
                     name: fn.$ir.name,
                     request: {
@@ -144,7 +144,7 @@ print(output)
         const dockerfile = build_commands.join('\n')
         await rt.writeFile(`${imageName}.dockerfile`, dockerfile)
         const proc = rt.runCommand('docker', {
-            args: ['build','--no-cache','-t',imageName,'-f',`${imageName}.dockerfile`,'.'],
+            args: ['build','--no-cache','-t',`localhost:5000/${imageName}`,'-f',`${imageName}.dockerfile`,'.'],
             cwd: process.cwd(),
             stdio: 'inherit'
         })
