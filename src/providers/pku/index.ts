@@ -143,7 +143,7 @@ print(output)
         const dockerfile = build_commands.join('\n')
         await rt.writeFile(`${imageName}.dockerfile`, dockerfile)
         const proc = rt.runCommand('docker', {
-            args: ['build','--no-cache','-t',`localhost:5000/${imageName}`,'-f',`${imageName}.dockerfile`,'.'],
+            args: ['build','--no-cache','-t',`${imageName}`,'-f',`${imageName}.dockerfile`,'.'],
             cwd: process.cwd(),
             stdio: 'inherit'
         })
