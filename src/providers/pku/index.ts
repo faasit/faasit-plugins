@@ -206,24 +206,40 @@ print(output)
 
     }
     async invoke(input: faas.ProviderInvokeInput, ctx: faas.ProviderPluginContext) {
-        const {app} = input
+        const {app,provider} = input
         let redis_preload_folder = ''
         if (app.output.opts) {
             redis_preload_folder = `${process.cwd()}/${app.output.opts['redis_preload_folder']}`
         }
         console.log(`Redis folder: ${redis_preload_folder}`)
+        let cmd_args_map:{ [key: string]: string } = {
+            'repeat': '1',
+            'launch': 'tradition',
+            'transmode': 'allTCP',
+            'profile': `${process.cwd()}/${app.$ir.name}.yaml`
+        }
         let com_args = [
             '-m',
             'serverless_framework.controller',
-            '--repeat',
-            '1',
-            '--launch',
-            'tradition',
-            '--transmode',
-            'allTCP',
-            '--profile',
-            `${process.cwd()}/${app.$ir.name}.yaml`
+            // '--repeat',
+            // '1',
+            // '--launch',
+            // 'tradition',
+            // '--transmode',
+            // 'allTCP',
+            // '--profile',
+            // `${process.cwd()}/${app.$ir.name}.yaml`
         ]
+        if (provider.output.opts) {
+            for (let [key,value] of Object.entries(provider.output.opts)) {
+                cmd_args_map[key] = value
+            }
+        }
+        for (let [key, value] of Object.entries(cmd_args_map)) {
+            console.log(`Parse config ${key}=${value}`)
+            com_args.push(`--${key}`)
+            com_args.push(value)
+        }
         if (redis_preload_folder) {
             com_args.push('--redis_preload_folder')
             com_args.push(redis_preload_folder)
