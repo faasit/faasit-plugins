@@ -21,7 +21,7 @@ class PKUProvider implements faas.ProviderPlugin {
         const {rt, logger} = ctx
         if (app.output.workflow) {
             const job_name = app.$ir.name
-            const image = 'faasit-spilot:0.2'
+            const image = 'faasit-spilot:0.3'
             for (const fnRef of app.output.workflow.value.output.functions) {
                 const fn = fnRef.value
                 const fn_image_name = `${job_name}-${fn.$ir.name}:tmp`
