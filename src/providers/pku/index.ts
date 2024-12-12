@@ -21,11 +21,24 @@ class PKUProvider implements faas.ProviderPlugin {
         const {rt, logger} = ctx
         if (app.output.workflow) {
             const job_name = app.$ir.name
-            const image = 'faasit-spilot:0.3'
-            for (const fnRef of app.output.workflow.value.output.functions) {
-                const fn = fnRef.value
-                const fn_image_name = `${job_name}-${fn.$ir.name}:tmp`
-                await this.build_docker_image(image, fn_image_name, fn.output.codeDir, ctx)
+            if (app.output.workflow.value.output.runtime == 'nodejs') {
+                const image = 'faasit-spilot:0.3-node'
+                const template_py = `${path.dirname(__filename)}/template.py`
+                const index_py = `${app.output.workflow.value.output.codeDir}/index.py`
+                await fs.copyFile(template_py, index_py, (err) => {
+                    if (err) {
+                        console.log(err)
+                    }
+                })
+                const app_image_name = `${job_name}:tmp`
+                await this.build_docker_image(image, app_image_name, app.output.workflow.value.output.codeDir, ctx)
+            } else {
+                const image = 'faasit-spilot:0.3'
+                for (const fnRef of app.output.workflow.value.output.functions) {
+                    const fn = fnRef.value
+                    const fn_image_name = `${job_name}-${fn.$ir.name}:tmp`
+                    await this.build_docker_image(image, fn_image_name, fn.output.codeDir, ctx)
+                }
             }
         }
     }
@@ -37,8 +50,8 @@ class PKUProvider implements faas.ProviderPlugin {
             job_name: job_name,
             setup: `uname -a
             echo "Hello, world!"`,
-            run: `cd ServerlessPilot && python3 serverless-framework/controller.py --repeat __repeat_times__ --para __thput_para__ --launch __launch_mode__ --transmode __transmode__ --ditto_placement --profile config/mlpipe.yaml --remote_call_timeout 10.0 --post_ratio 1.0`,
-            profile: `cd ServerlessPilot && python3 serverless-framework/controller.py --repeat __repeat_times__ --para __thput_para__ --launch __launch_mode__ --transmode __transmode__ --ditto_placement --profile config/mlpipe.yaml --remote_call_timeout 10.0 --post_ratio 1.0`
+            run: `cd ${process.cwd()} && ft invoke`,
+            profile: `cd ${process.cwd()} && ft invoke`
         }
         return yaml.dump(spilot_yaml)
     }
@@ -72,6 +85,18 @@ print(output)
         result = JSON.parse(result)
         result = yaml.dump(result)
         return result
+    }
+
+    async node_generate_dag(job_name:string, ctx: faas.ProviderPluginContext) {
+        const data = {
+            default_params: {
+                [job_name]: {}
+            },
+            DAG: {
+                [job_name]: {}
+            }
+        }
+        return yaml.dump(data)
     }
 
     generate_app_yaml(app_name:string ,stages: stage[]) {
@@ -140,6 +165,9 @@ print(output)
             build_commands.push(`COPY ${path.join(codeDir, 'requirements.txt')} /requirements.txt`)
             build_commands.push(`RUN pip install -r /requirements.txt`)
         }
+        if (fs.existsSync(path.join(codeDir, 'package.json'))) {
+            build_commands.push(`RUN pnpm install @faasit/runtime`)
+        }
         const dockerfile = build_commands.join('\n')
         await rt.writeFile(`${imageName}.dockerfile`, dockerfile)
         const proc = rt.runCommand('docker', {
@@ -156,27 +184,47 @@ print(output)
         logger.info("Deploying app to pku")
         if (app.output.workflow) {
             const job_name = app.$ir.name
-            const image = 'faasit-spilot:0.2'
+            const image = 'faasit-spilot:0.3'
             const spilot_yaml = this.generate_spilot_yaml(job_name, image)
             await rt.writeFile('.spilot.yaml', spilot_yaml)
             let stages = new Array<stage>()
-            for (const fnRef of app.output.workflow.value.output.functions) {
-                const fn = fnRef.value
-                const fn_image_name = `${job_name}-${fn.$ir.name}:tmp`
-                const stage: stage = {
-                    name: fn.$ir.name,
+            const runtime = app.output.workflow.value.output.runtime
+            if (runtime == 'nodejs') {
+                const stage:stage = {
+                    name: job_name,
                     request: {
-                        vcpu: fn.output.resource? parseInt(fn.output.resource.cpu) : 1
+                        vcpu: 1
                     },
-                    image: fn_image_name,
-                    codeDir: fn.output.codeDir,
-                    replicas: fn.output.replicas? fn.output.replicas:1
+                    image: `${job_name}:tmp`,
+                    codeDir: app.output.workflow.value.output.codeDir,
+                    replicas: 1
                 }
                 stages.push(stage)
-                // await this.build_docker_image(image, fn_image_name, fn.output.codeDir, ctx)
+            } else {
+                for (const fnRef of app.output.workflow.value.output.functions) {
+                    const fn = fnRef.value
+                    const fn_image_name = `${job_name}-${fn.$ir.name}:tmp`
+                    const stage: stage = {
+                        name: fn.$ir.name,
+                        request: {
+                            vcpu: fn.output.resource? parseInt(fn.output.resource.cpu) : 1
+                        },
+                        image: fn_image_name,
+                        codeDir: fn.output.codeDir,
+                        replicas: fn.output.replicas? fn.output.replicas:1
+                    }
+                    stages.push(stage)
+                    // await this.build_docker_image(image, fn_image_name, fn.output.codeDir, ctx)
+                }
             }
             let app_yaml = this.generate_app_yaml(app.$ir.name, stages)
-            let dag_yaml = await this.python_generate_dag(app.output.workflow.value.output.codeDir, ctx)
+            console.log(runtime)
+            let dag_yaml = ''
+            if (runtime == 'nodejs') {
+                dag_yaml = await this.node_generate_dag(job_name, ctx)
+            } else {
+                dag_yaml = await this.python_generate_dag(app.output.workflow.value.output.codeDir, ctx) 
+            }
             app_yaml = app_yaml + '\n' + dag_yaml
             await rt.writeFile(`${app.$ir.name}.yaml`, app_yaml)
             
