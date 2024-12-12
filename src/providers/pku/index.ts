@@ -163,7 +163,7 @@ print(output)
         build_commands.push(`WORKDIR /code`)
         if (fs.existsSync(path.join(codeDir, 'requirements.txt'))) {
             build_commands.push(`COPY ${path.join(codeDir, 'requirements.txt')} /requirements.txt`)
-            build_commands.push(`RUN pip install -r /requirements.txt`)
+            build_commands.push(`RUN pip install -r /requirements.txt --index-url https://mirrors.aliyun.com/pypi/simple/`)
         }
         if (fs.existsSync(path.join(codeDir, 'package.json'))) {
             build_commands.push(`RUN pnpm install @faasit/runtime`)
