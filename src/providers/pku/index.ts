@@ -46,7 +46,7 @@ class PKUProvider implements faas.ProviderPlugin {
 
     generate_spilot_yaml(job_name:string, image:string) {
         const spilot_yaml = {
-            image: image,
+            image: 'enavenue/watcher-img:latest',
             job_name: job_name,
             setup: `uname -a
             echo "Hello, world!"`,
@@ -62,7 +62,7 @@ import json
 import os
 os.environ["FAASIT_PROVIDER"]="pku"
 from index import handler
-output,invoke = handler()
+output = handler()
 print(output)
     `.trim() 
         const proc = ctx.rt.runCommand(`python`, {

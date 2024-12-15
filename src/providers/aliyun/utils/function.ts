@@ -15,7 +15,7 @@ export class AliyunFunction {
   }) {
     const region = 'cn-hangzhou'
     const accountId = process.env.FAASIT_SECRET_ALIYUN_ACCOUNT_ID
-    const version = '21'
+    const version = '24'
     const layer_name = 'ft-rt-py'
     this.layer = `acs:fc:${region}:${accountId}:layers/${layer_name}/versions/${version}`
   }
@@ -41,7 +41,9 @@ export class AliyunFunction {
       code: code,
       environmentVariables: this.opt.env
     });
-    let runtime = new $Util.RuntimeOptions({});
+    let runtime = new $Util.RuntimeOptions({
+      connectTimeout: 10000
+    });
     try {
       const resp = await this.opt.client.createFunctionWithOptions(
         this.opt.serviceName,
@@ -79,7 +81,9 @@ export class AliyunFunction {
       code: code,
       environmentVariables: this.opt.env
     });
-    let runtime = new $Util.RuntimeOptions({});
+    let runtime = new $Util.RuntimeOptions({
+      connectTimeout: 10000
+    });
     try {
       const resp = await this.opt.client.updateFunctionWithOptions(
         this.opt.serviceName,
@@ -95,7 +99,7 @@ export class AliyunFunction {
 
   async invoke(event: any): Promise<$FC_Open20210406.InvokeFunctionResponse | undefined> {
     let invokeFunctionRequests = new $FC_Open20210406.InvokeFunctionRequest({
-      body: event ? Util.toBytes(JSON.stringify(event)) : ''
+      body: event ? Util.toBytes(JSON.stringify(event)) : Util.toBytes(JSON.stringify({}))
     });
     try {
       const resp = await this.opt.client.invokeFunction(this.opt.serviceName, this.opt.functionName, invokeFunctionRequests);
