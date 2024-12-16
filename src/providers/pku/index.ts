@@ -16,8 +16,8 @@ interface stage {
 class PKUProvider implements faas.ProviderPlugin {
     name: string = 'pku'
 
-    async build(input: faas.ProviderDeployInput, ctx: faas.ProviderPluginContext) {
-        const {app} = input
+    async build(input: faas.ProviderBuildInput, ctx: faas.ProviderPluginContext) {
+        const {app,registry} = input
         const {rt, logger} = ctx
         if (app.output.workflow) {
             const job_name = app.$ir.name
@@ -31,13 +31,13 @@ class PKUProvider implements faas.ProviderPlugin {
                     }
                 })
                 const app_image_name = `${job_name}:tmp`
-                await this.build_docker_image(image, app_image_name, app.output.workflow.value.output.codeDir, ctx)
+                await this.build_docker_image(image, app_image_name, app.output.workflow.value.output.codeDir, ctx, registry)
             } else {
                 const image = 'faasit-spilot:0.3'
                 for (const fnRef of app.output.workflow.value.output.functions) {
                     const fn = fnRef.value
                     const fn_image_name = `${job_name}-${fn.$ir.name}:tmp`
-                    await this.build_docker_image(image, fn_image_name, fn.output.codeDir, ctx)
+                    await this.build_docker_image(image, fn_image_name, fn.output.codeDir, ctx,registry)
                 }
             }
         }
@@ -154,9 +154,9 @@ print(output)
 
     }
 
-    async build_docker_image(baseImageName:string,imageName: string,codeDir:string,ctx: faas.ProviderPluginContext) {
+    async build_docker_image(baseImageName:string,imageName: string,codeDir:string,ctx: faas.ProviderPluginContext, registry?: string) {
         const {rt,logger} = ctx
-        logger.info(`Building docker image ${imageName}`)
+        logger.info(`> Building docker image ${imageName}`)
         let build_commands = []
         build_commands.push(`FROM ${baseImageName}`)
         build_commands.push(`COPY ${codeDir} /code`)
@@ -176,6 +176,26 @@ print(output)
             stdio: 'inherit'
         })
         await proc.wait()
+        if (registry) {
+            await this.push_image(imageName, registry, ctx)
+        }
+    }
+
+    async push_image(imageName: string, registry: string, ctx: faas.ProviderPluginContext) {
+        const {rt,logger} = ctx
+        logger.info(`> Pushing image ${imageName} to registry ${registry}...`)
+        const proc = rt.runCommand('docker', {
+            args: ['tag',imageName,`${registry}/${imageName}`],
+            cwd: process.cwd(),
+            stdio: 'inherit'
+        })
+        await proc.wait()
+        const proc2 = rt.runCommand('docker', {
+            args: ['push',`${registry}/library/${imageName}`],
+            cwd: process.cwd(),
+            stdio: 'inherit'
+        })
+        await proc2.wait()
     }
 
     async deploy(input: faas.ProviderDeployInput, ctx: faas.ProviderPluginContext) {
