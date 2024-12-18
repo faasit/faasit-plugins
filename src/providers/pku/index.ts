@@ -2,6 +2,7 @@ import {faas} from '@faasit/std'
 import yaml from 'js-yaml'
 import path from 'path'
 import fs from 'fs'
+import Docker from 'dockerode'
 
 interface stage {
     name: string,
@@ -16,25 +17,42 @@ interface stage {
 class PKUProvider implements faas.ProviderPlugin {
     name: string = 'pku'
 
+    async get_base_image(baseImage:string|undefined):Promise<string> {
+        if (baseImage) {
+            return baseImage
+        }
+        const docker = new Docker();
+        const images = await docker.listImages({
+            filters: {
+                reference: ['faasit-spilot']
+            }
+        });
+        if (images.length == 0) {
+            console.warn(`Base image faasit-spilot not found, using default image`)
+            return 'faasit-spilot'
+        }
+        const image_tags = images.flatMap(image => image.RepoTags).sort()
+        return image_tags.at(-1) || 'faasit-spilot';
+    }
+
     async build(input: faas.ProviderBuildInput, ctx: faas.ProviderPluginContext) {
         const {app,registry} = input
         const {rt, logger} = ctx
         if (app.output.workflow) {
             const job_name = app.$ir.name
             if (app.output.workflow.value.output.runtime == 'nodejs') {
-                const image = 'faasit-spilot:0.3-node'
+                const image = await this.get_base_image(undefined)
                 const template_py = `${path.dirname(__filename)}/template.py`
                 const index_py = `${app.output.workflow.value.output.codeDir}/index.py`
-                await fs.copyFile(template_py, index_py, (err) => {
-                    if (err) {
-                        console.log(err)
-                    }
-                })
+                let python_scripts = fs.readFileSync(template_py).toString()
+                python_scripts = python_scripts.replace(/__params__/g, app.output.inputExamples? JSON.stringify(app.output.inputExamples[0].value):'{}')
+                fs.writeFileSync(index_py, python_scripts)
                 const app_image_name = `${job_name}:tmp`
                 await this.build_docker_image(image, app_image_name, app.output.workflow.value.output.codeDir, ctx, registry)
             } else {
-                const image = 'faasit-spilot:0.3'
+                // const image = 'faasit-spilot:0.4'
                 for (const fnRef of app.output.workflow.value.output.functions) {
+                    const image = await this.get_base_image(fnRef.value.output.baseImage)
                     const fn = fnRef.value
                     const fn_image_name = `${job_name}-${fn.$ir.name}:tmp`
                     await this.build_docker_image(image, fn_image_name, fn.output.codeDir, ctx,registry)
@@ -44,7 +62,7 @@ class PKUProvider implements faas.ProviderPlugin {
     }
 
 
-    generate_spilot_yaml(job_name:string, image:string) {
+    generate_spilot_yaml(job_name:string) {
         const spilot_yaml = {
             image: 'enavenue/watcher-img:latest',
             job_name: job_name,
@@ -170,6 +188,33 @@ print(output)
         }
         const dockerfile = build_commands.join('\n')
         await rt.writeFile(`${imageName}.dockerfile`, dockerfile)
+        // const docker = new Docker()
+
+        // const stream = await docker.buildImage({
+        //     context: process.cwd(),
+        //     src: ['.']
+        // }, {
+        //     t: imageName,
+        //     dockerfile: `${imageName}.dockerfile`,
+        //     nocache: true
+        // })
+        // await new Promise((resolve, reject) => {
+        //     docker.modem.followProgress(stream, (err, res) => {
+        //         if (err) {
+        //             console.error(err)
+        //             reject(err)
+        //         }
+        //         resolve(res)
+        //     }, (event) =>  {
+        //         const cleanOutput = (input:string) => {
+        //             return input.split('\n').filter(line => line.trim()).join('\n')
+        //         }
+        //         if (event.stream) {
+        //             logger.info(cleanOutput(event.stream))
+        //         }
+        //     })
+        // })
+        
         const proc = rt.runCommand('docker', {
             args: ['build','--no-cache','-t',`${imageName}`,'-f',`${imageName}.dockerfile`,'.'],
             cwd: process.cwd(),
@@ -183,13 +228,36 @@ print(output)
 
     async push_image(imageName: string, registry: string, ctx: faas.ProviderPluginContext) {
         const {rt,logger} = ctx
-        logger.info(`> Pushing image ${imageName} to registry ${registry}...`)
+        // const docker = new Docker()
+        logger.info(`> Tagging image ${imageName} to ${registry}/library/${imageName}`)
+        // await docker.getImage(imageName).tag({
+        //     repo: `${registry}/library/${imageName}`
+        // })
+        // const pushStream = await docker.getImage(`${registry}/library/${imageName}`).push()
+        
+        // await new Promise((resolve, reject) => {
+        //     docker.modem.followProgress(pushStream, (err, res) => {
+        //         if (err) {
+            //             console.error(err)
+            //             reject(err)
+            //         }
+            //         resolve(res)
+            //     }, (event) =>  {
+                //         const cleanOutput = (input:string) => {
+                    //             return input.split('\n').filter(line => line.trim()).join('\n')
+        //         }
+        //         if (event.stream) {
+            //             logger.info(cleanOutput(event.stream))
+            //         }
+            //     })
+            // })
         const proc = rt.runCommand('docker', {
-            args: ['tag',imageName,`${registry}/${imageName}`],
+            args: ['tag',imageName,`${registry}/library/${imageName}`],
             cwd: process.cwd(),
             stdio: 'inherit'
         })
         await proc.wait()
+        logger.info(`> Pushing image ${registry}/library/${imageName} to registry ${registry}...`)
         const proc2 = rt.runCommand('docker', {
             args: ['push',`${registry}/library/${imageName}`],
             cwd: process.cwd(),
@@ -204,8 +272,7 @@ print(output)
         logger.info("Deploying app to pku")
         if (app.output.workflow) {
             const job_name = app.$ir.name
-            const image = 'faasit-spilot:0.3'
-            const spilot_yaml = this.generate_spilot_yaml(job_name, image)
+            const spilot_yaml = this.generate_spilot_yaml(job_name)
             await rt.writeFile('.spilot.yaml', spilot_yaml)
             let stages = new Array<stage>()
             const runtime = app.output.workflow.value.output.runtime
@@ -238,7 +305,6 @@ print(output)
                 }
             }
             let app_yaml = this.generate_app_yaml(app.$ir.name, stages)
-            console.log(runtime)
             let dag_yaml = ''
             if (runtime == 'nodejs') {
                 dag_yaml = await this.node_generate_dag(job_name, ctx)
