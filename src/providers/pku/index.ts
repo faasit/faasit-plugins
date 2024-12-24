@@ -164,6 +164,7 @@ print(output)
             },
             image_coldstart_latency: image_coldstart_latency,
             knative_template: `${path.dirname(__filename)}/knative-template.yaml`,
+            vk_template: ``,
             external_ip: "10.0.0.234",
             stage_profiles: stage_profiles,
             // default_params: inputExample,
@@ -314,26 +315,26 @@ print(output)
             app_yaml = app_yaml + '\n' + dag_yaml
             await rt.writeFile(`${app.$ir.name}.yaml`, app_yaml)
             
-            const proc = ctx.rt.runCommand('python', {
-                args: ['upload.py', `deploy`,
-                    '--path',
-                    ctx.cwd,
-                    '--job',
-                    app.$ir.name,
-                ],
-                cwd: path.dirname(__filename),
-                stdio: 'inherit'
-            })
-            await Promise.all([
-                proc.readOut(v => {
-                    console.log(v)
-                }
-                ),
-                proc.readErr(v => {
-                    console.log(v)
-                })
-            ])
-            await proc.wait()
+            // const proc = ctx.rt.runCommand('python', {
+            //     args: ['upload.py', `deploy`,
+            //         '--path',
+            //         ctx.cwd,
+            //         '--job',
+            //         app.$ir.name,
+            //     ],
+            //     cwd: path.dirname(__filename),
+            //     stdio: 'inherit'
+            // })
+            // await Promise.all([
+            //     proc.readOut(v => {
+            //         console.log(v)
+            //     }
+            //     ),
+            //     proc.readErr(v => {
+            //         console.log(v)
+            //     })
+            // ])
+            // await proc.wait()
         }
 
 
