@@ -3,6 +3,7 @@ import yaml from 'js-yaml'
 import path from 'path'
 import fs from 'fs'
 import Docker from 'dockerode'
+import { ir } from '@faasit/core'
 
 interface stage {
     name: string,
@@ -35,10 +36,35 @@ class PKUProvider implements faas.ProviderPlugin {
         return image_tags.at(-1) || 'faasit-spilot';
     }
 
+    async build_functions_image(
+        functions:ir.types.Reference<faas.Function>[], 
+        ctx: faas.ProviderPluginContext, 
+        fastStart:boolean = false,
+        registry?: string, 
+        app_name?:string
+    ) {
+        for (const fnRef of functions) {
+            const image = await this.get_base_image(fnRef.value.output.baseImage)
+            const fn = fnRef.value
+            let fn_image_name:string = ''
+            if (app_name) {
+                fn_image_name = `${app_name}-${fn.$ir.name}:tmp`
+            } else {
+                fn_image_name = `${fn.$ir.name}:tmp`
+            }
+            await this.build_docker_image(image, fn_image_name, fn.output.codeDir, ctx,registry,fastStart)
+        }
+
+    }
+
     async build(input: faas.ProviderBuildInput, ctx: faas.ProviderPluginContext) {
-        const {app,registry} = input
+        const {app,registry,provider} = input
         const {rt, logger} = ctx
+        const startMode = provider.output.deployment?.startMode || 'tradition'
+        const useFastStart:boolean = startMode == 'fast-start'
+        logger.info(`Using fast start mode: ${useFastStart}`)
         if (app.output.workflow) {
+            logger.info("Workflow mode")
             const job_name = app.$ir.name
             if (app.output.workflow.value.output.runtime == 'nodejs') {
                 const image = await this.get_base_image(undefined)
@@ -48,16 +74,20 @@ class PKUProvider implements faas.ProviderPlugin {
                 python_scripts = python_scripts.replace(/__params__/g, app.output.inputExamples? JSON.stringify(app.output.inputExamples[0].value):'{}')
                 fs.writeFileSync(index_py, python_scripts)
                 const app_image_name = `${job_name}:tmp`
-                await this.build_docker_image(image, app_image_name, app.output.workflow.value.output.codeDir, ctx, registry)
+                await this.build_docker_image(image, app_image_name, app.output.workflow.value.output.codeDir, ctx, registry, useFastStart)
             } else {
                 // const image = 'faasit-spilot:0.4'
-                for (const fnRef of app.output.workflow.value.output.functions) {
-                    const image = await this.get_base_image(fnRef.value.output.baseImage)
-                    const fn = fnRef.value
-                    const fn_image_name = `${job_name}-${fn.$ir.name}:tmp`
-                    await this.build_docker_image(image, fn_image_name, fn.output.codeDir, ctx,registry)
-                }
+                // for (const fnRef of app.output.workflow.value.output.functions) {
+                //     const image = await this.get_base_image(fnRef.value.output.baseImage)
+                //     const fn = fnRef.value
+                //     const fn_image_name = `${job_name}-${fn.$ir.name}:tmp`
+                //     await this.build_docker_image(image, fn_image_name, fn.output.codeDir, ctx,registry)
+                // }
+                await this.build_functions_image(app.output.workflow.value.output.functions,ctx,useFastStart,registry,job_name)
             }
+        } else {
+            logger.info("Function mode")
+            await this.build_functions_image(app.output.functions,ctx,useFastStart,registry)
         }
     }
 
@@ -117,7 +147,15 @@ print(output)
         return yaml.dump(data)
     }
 
-    generate_app_yaml(app_name:string ,stages: stage[]) {
+    get_runtime_template(runtime:string) {
+        if (runtime == 'runvk') {
+            return `${path.dirname(__filename)}/template_runvk.yaml`
+        } else {
+            return `${path.dirname(__filename)}/template.yaml`
+        }
+    }
+
+    generate_app_yaml(app_name:string ,stages: stage[], runtime:string = 'normal') {
         let stage_profiles: { [key: string]: any } = {};
         let image_coldstart_latency: { [key: string]: number } = {};
         let port: number = 10000
@@ -156,7 +194,7 @@ print(output)
 
         const app_yaml = {
             app_name: app_name,
-            template: `${path.dirname(__filename)}/template.yaml`,
+            template: this.get_runtime_template(runtime),
             node_resources: {
                 cloud: {
                     vcpu: 20
@@ -173,13 +211,28 @@ print(output)
 
     }
 
-    async build_docker_image(baseImageName:string,imageName: string,codeDir:string,ctx: faas.ProviderPluginContext, registry?: string) {
+    async build_docker_image(
+        baseImageName:string,
+        imageName: string,
+        codeDir:string,
+        ctx: faas.ProviderPluginContext, 
+        registry?: string,
+        useFastStart: boolean = false
+    ) {
+        function generate_faststart_code(codeDir:string) {
+            const faststartCode = `${path.dirname(__filename)}/fast_start.py`
+            const dest_py = `${codeDir}/fast_start.py`
+            fs.writeFileSync(dest_py, fs.readFileSync(faststartCode))
+        }
         const {rt,logger} = ctx
         logger.info(`> Building docker image ${imageName}`)
         let build_commands = []
         build_commands.push(`FROM ${baseImageName}`)
         build_commands.push(`COPY ${codeDir} /code`)
         build_commands.push(`WORKDIR /code`)
+        if (useFastStart) {
+            generate_faststart_code(codeDir)
+        }
         if (fs.existsSync(path.join(codeDir, 'requirements.txt'))) {
             build_commands.push(`COPY ${path.join(codeDir, 'requirements.txt')} /requirements.txt`)
             build_commands.push(`RUN pip install -r /requirements.txt --index-url https://mirrors.aliyun.com/pypi/simple/`)
@@ -189,32 +242,6 @@ print(output)
         }
         const dockerfile = build_commands.join('\n')
         await rt.writeFile(`${imageName}.dockerfile`, dockerfile)
-        // const docker = new Docker()
-
-        // const stream = await docker.buildImage({
-        //     context: process.cwd(),
-        //     src: ['.']
-        // }, {
-        //     t: imageName,
-        //     dockerfile: `${imageName}.dockerfile`,
-        //     nocache: true
-        // })
-        // await new Promise((resolve, reject) => {
-        //     docker.modem.followProgress(stream, (err, res) => {
-        //         if (err) {
-        //             console.error(err)
-        //             reject(err)
-        //         }
-        //         resolve(res)
-        //     }, (event) =>  {
-        //         const cleanOutput = (input:string) => {
-        //             return input.split('\n').filter(line => line.trim()).join('\n')
-        //         }
-        //         if (event.stream) {
-        //             logger.info(cleanOutput(event.stream))
-        //         }
-        //     })
-        // })
         
         const proc = rt.runCommand('docker', {
             args: ['build','--no-cache','-t',`${imageName}`,'-f',`${imageName}.dockerfile`,'.'],
@@ -229,29 +256,7 @@ print(output)
 
     async push_image(imageName: string, registry: string, ctx: faas.ProviderPluginContext) {
         const {rt,logger} = ctx
-        // const docker = new Docker()
         logger.info(`> Tagging image ${imageName} to ${registry}/library/${imageName}`)
-        // await docker.getImage(imageName).tag({
-        //     repo: `${registry}/library/${imageName}`
-        // })
-        // const pushStream = await docker.getImage(`${registry}/library/${imageName}`).push()
-        
-        // await new Promise((resolve, reject) => {
-        //     docker.modem.followProgress(pushStream, (err, res) => {
-        //         if (err) {
-            //             console.error(err)
-            //             reject(err)
-            //         }
-            //         resolve(res)
-            //     }, (event) =>  {
-                //         const cleanOutput = (input:string) => {
-                    //             return input.split('\n').filter(line => line.trim()).join('\n')
-        //         }
-        //         if (event.stream) {
-            //             logger.info(cleanOutput(event.stream))
-            //         }
-            //     })
-            // })
         const proc = rt.runCommand('docker', {
             args: ['tag',imageName,`${registry}/library/${imageName}`],
             cwd: process.cwd(),
@@ -268,13 +273,15 @@ print(output)
     }
 
     async deploy(input: faas.ProviderDeployInput, ctx: faas.ProviderPluginContext) {
-        const {app} = input
+        const {app,provider} = input
         const {rt, logger} = ctx
         logger.info("Deploying app to pku")
+        const runtimeClass = provider.output.deployment?.runtimeClass || 'normal'
+        logger.info(`Runtime class: ${runtimeClass}`)
+        const startMode = provider.output.deployment?.startMode || 'tradition'
+        logger.info(`Using fast start mode: ${startMode == 'fast-start'}`)
         if (app.output.workflow) {
             const job_name = app.$ir.name
-            const spilot_yaml = this.generate_spilot_yaml(job_name)
-            await rt.writeFile('.spilot.yaml', spilot_yaml)
             let stages = new Array<stage>()
             const runtime = app.output.workflow.value.output.runtime
             if (runtime == 'nodejs') {
@@ -302,10 +309,9 @@ print(output)
                         replicas: fn.output.replicas? fn.output.replicas:1
                     }
                     stages.push(stage)
-                    // await this.build_docker_image(image, fn_image_name, fn.output.codeDir, ctx)
                 }
             }
-            let app_yaml = this.generate_app_yaml(app.$ir.name, stages)
+            let app_yaml = this.generate_app_yaml(app.$ir.name, stages, runtimeClass)
             let dag_yaml = ''
             if (runtime == 'nodejs') {
                 dag_yaml = await this.node_generate_dag(job_name, ctx)
@@ -315,26 +321,6 @@ print(output)
             app_yaml = app_yaml + '\n' + dag_yaml
             await rt.writeFile(`${app.$ir.name}.yaml`, app_yaml)
             
-            // const proc = ctx.rt.runCommand('python', {
-            //     args: ['upload.py', `deploy`,
-            //         '--path',
-            //         ctx.cwd,
-            //         '--job',
-            //         app.$ir.name,
-            //     ],
-            //     cwd: path.dirname(__filename),
-            //     stdio: 'inherit'
-            // })
-            // await Promise.all([
-            //     proc.readOut(v => {
-            //         console.log(v)
-            //     }
-            //     ),
-            //     proc.readErr(v => {
-            //         console.log(v)
-            //     })
-            // ])
-            // await proc.wait()
         }
 
 
@@ -342,11 +328,6 @@ print(output)
     }
     async invoke(input: faas.ProviderInvokeInput, ctx: faas.ProviderPluginContext) {
         const {app,provider} = input
-        let redis_preload_folder = ''
-        if (app.output.opts) {
-            redis_preload_folder = `${process.cwd()}/${app.output.opts['redis_preload_folder']}`
-        }
-        console.log(`Redis folder: ${redis_preload_folder}`)
         let cmd_args_map:{ [key: string]: string } = {
             'repeat': '1',
             'launch': 'tradition',
@@ -356,17 +337,9 @@ print(output)
         let com_args = [
             '-m',
             'serverless_framework.controller',
-            // '--repeat',
-            // '1',
-            // '--launch',
-            // 'tradition',
-            // '--transmode',
-            // 'allTCP',
-            // '--profile',
-            // `${process.cwd()}/${app.$ir.name}.yaml`
         ]
-        if (provider.output.opts) {
-            for (let [key,value] of Object.entries(provider.output.opts)) {
+        if (provider.output.invoke) {
+            for (let [key,value] of Object.entries(provider.output.invoke)) {
                 cmd_args_map[key] = value
             }
         }
@@ -374,10 +347,6 @@ print(output)
             console.log(`Parse config ${key}=${value}`)
             com_args.push(`--${key}`)
             com_args.push(value)
-        }
-        if (redis_preload_folder) {
-            com_args.push('--redis_preload_folder')
-            com_args.push(redis_preload_folder)
         }
         const proc = ctx.rt.runCommand(`python`, {
             args: com_args,
