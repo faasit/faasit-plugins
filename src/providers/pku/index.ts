@@ -63,9 +63,9 @@ class PKUProvider implements faas.ProviderPlugin {
         const startMode = provider.output.deployment?.startMode || 'tradition'
         const useFastStart:boolean = startMode == 'fast-start'
         logger.info(`Using fast start mode: ${useFastStart}`)
+        const job_name = app.$ir.name
         if (app.output.workflow) {
             logger.info("Workflow mode")
-            const job_name = app.$ir.name
             if (app.output.workflow.value.output.runtime == 'nodejs') {
                 const image = await this.get_base_image(undefined)
                 const template_py = `${path.dirname(__filename)}/template.py`
@@ -87,7 +87,7 @@ class PKUProvider implements faas.ProviderPlugin {
             }
         } else {
             logger.info("Function mode")
-            await this.build_functions_image(app.output.functions,ctx,useFastStart,registry)
+            await this.build_functions_image(app.output.functions,ctx,useFastStart,registry,job_name)
         }
     }
 
@@ -147,69 +147,8 @@ print(output)
         return yaml.dump(data)
     }
 
-    get_runtime_template(runtime:string) {
-        if (runtime == 'runvk') {
-            return `${path.dirname(__filename)}/template_runvk.yaml`
-        } else {
-            return `${path.dirname(__filename)}/template.yaml`
-        }
-    }
-
-    generate_app_yaml(app_name:string ,stages: stage[], runtime:string = 'normal') {
-        let stage_profiles: { [key: string]: any } = {};
-        let image_coldstart_latency: { [key: string]: number } = {};
-        let port: number = 10000
-        for (const stage of stages) {
-            const _stage_generator = () => {
-                return {
-                    request: {
-                        vcpu: stage.request.vcpu
-                    },
-                    input_time: 0,
-                    compute_time: 0,
-                    output_time: 0,
-                    worker_external_port: port++,
-                    cache_server_external_port: port++,
-                    worker_port: port++,
-                    cache_server_port: port++,
-                    
-                    parallelism: 4,
-                    image: stage.image,
-                    codeDir: stage.codeDir,
-                    command: '["/bin/bash"]',
-                    args: `["-c", "cd / && python3 -m serverless_framework.worker /code/index.py handler --port __worker-port__ --parallelism __parallelism__ --cache_server_port __cache-server-port__ --debug"]`
-                }
-            }
-            if (stage.replicas > 1) {
-                for (let i = 0; i < stage.replicas; i++) {
-                    const name = `${stage.name}-${i}`
-                    stage_profiles[name] = _stage_generator()
-                }
-            } else {
-                const name = stage.name
-                stage_profiles[name] = _stage_generator()
-            }
-            image_coldstart_latency[stage.image] = 2.0
-        }
-
-        const app_yaml = {
-            app_name: app_name,
-            template: this.get_runtime_template(runtime),
-            node_resources: {
-                cloud: {
-                    vcpu: 20
-                }
-            },
-            image_coldstart_latency: image_coldstart_latency,
-            knative_template: `${path.dirname(__filename)}/knative-template.yaml`,
-            vk_template: ``,
-            external_ip: "10.0.0.234",
-            stage_profiles: stage_profiles,
-            // default_params: inputExample,
-        }
-        return yaml.dump(app_yaml)
-
-    }
+    
+    
 
     async build_docker_image(
         baseImageName:string,
@@ -280,7 +219,73 @@ print(output)
         logger.info(`Runtime class: ${runtimeClass}`)
         const startMode = provider.output.deployment?.startMode || 'tradition'
         logger.info(`Using fast start mode: ${startMode == 'fast-start'}`)
-        if (app.output.workflow) {
+        function generate_app_yaml(app_name:string ,stages: stage[], runtime:string = 'normal') {
+            function get_runtime_template(runtime:string) {
+                if (runtime == 'runvk') {
+                    return `${path.dirname(__filename)}/template_runvk.yaml`
+                } else {
+                    return `${path.dirname(__filename)}/template.yaml`
+                }
+            }
+        
+            let stage_profiles: { [key: string]: any } = {};
+            let image_coldstart_latency: { [key: string]: number } = {};
+            let port: number = 10000
+            for (const stage of stages) {
+                const _stage_generator = () => {
+                    return {
+                        request: {
+                            vcpu: stage.request.vcpu
+                        },
+                        input_time: 0,
+                        compute_time: 0,
+                        output_time: 0,
+                        worker_external_port: port++,
+                        cache_server_external_port: port++,
+                        worker_port: port++,
+                        cache_server_port: port++,
+                        
+                        parallelism: 4,
+                        image: stage.image,
+                        codeDir: stage.codeDir,
+                        command: '["/bin/bash"]',
+                        args: `["-c", "cd / && PYTHONPATH=/code:$PYTHONPATH python3 -m serverless_framework.worker /code/index.py handler --port __worker-port__ --parallelism __parallelism__ --cache_server_port __cache-server-port__ --debug"]`
+                    }
+                }
+                if (stage.replicas > 1) {
+                    for (let i = 0; i < stage.replicas; i++) {
+                        const name = `${stage.name}-${i}`
+                        stage_profiles[name] = _stage_generator()
+                    }
+                } else {
+                    const name = stage.name
+                    stage_profiles[name] = _stage_generator()
+                }
+                image_coldstart_latency[stage.image] = 2.0
+            }
+    
+            const app_yaml = {
+                app_name: app_name,
+                template: get_runtime_template(runtime),
+                node_resources: {
+                    cloud: {
+                        vcpu: 20
+                    }
+                },
+                image_coldstart_latency: image_coldstart_latency,
+                knative_template: `${path.dirname(__filename)}/knative-template.yaml`,
+                vk_template: ``,
+                external_ip: "10.0.0.234",
+                stage_profiles: stage_profiles,
+                // default_params: inputExample,
+            }
+            return yaml.dump(app_yaml)
+    
+        }
+        async function deploy_workflow_app() {
+            if (!app.output.workflow) {
+                throw new Error("Workflow not found")
+            }
             const job_name = app.$ir.name
             let stages = new Array<stage>()
             const runtime = app.output.workflow.value.output.runtime
@@ -311,7 +316,7 @@ print(output)
                     stages.push(stage)
                 }
             }
-            let app_yaml = this.generate_app_yaml(app.$ir.name, stages, runtimeClass)
+            let app_yaml = generate_app_yaml(app.$ir.name, stages, runtimeClass)
             let dag_yaml = ''
             if (runtime == 'nodejs') {
                 dag_yaml = await this.node_generate_dag(job_name, ctx)
@@ -320,13 +325,39 @@ print(output)
             }
             app_yaml = app_yaml + '\n' + dag_yaml
             await rt.writeFile(`${app.$ir.name}.yaml`, app_yaml)
-            
+        }
+        async function deploy_functions_app() {
+            const job_name = app.$ir.name
+            let stages = new Array<stage>()
+            for (const fnRef of app.output.functions) {
+                const fn = fnRef.value
+                const fn_image_name = `${job_name}-${fn.$ir.name}:tmp`
+                const stage: stage = {
+                    name: fn.$ir.name,
+                    request: {
+                        vcpu: fn.output.resource? parseInt(fn.output.resource.cpu) : 1
+                    },
+                    image: fn_image_name,
+                    codeDir: fn.output.codeDir,
+                    replicas: fn.output.replicas? fn.output.replicas:1
+                }
+                stages.push(stage)
+            }
+            let app_yaml = generate_app_yaml(app.$ir.name, stages, runtimeClass)
+            app_yaml = app_yaml
+            await rt.writeFile(`${app.$ir.name}.yaml`, app_yaml)
+        }
+        if (app.output.workflow) {
+            await deploy_workflow_app()
+        } else {
+            await deploy_functions_app()
         }
 
 
 
     }
-    async invoke(input: faas.ProviderInvokeInput, ctx: faas.ProviderPluginContext) {
+
+    async invokeWorkflow(input: faas.ProviderInvokeInput, ctx: faas.ProviderPluginContext) {
         const {app,provider} = input
         let cmd_args_map:{ [key: string]: string } = {
             'repeat': '1',
@@ -364,6 +395,60 @@ print(output)
             }),
         ])
         await proc.wait()
+    }
+    async invokeFunction(input: faas.ProviderInvokeInput, ctx: faas.ProviderPluginContext) {
+        const {app, provider} = input
+        const funcName = input.funcName
+        const index = app.output.functions.findIndex(fn => fn.$ir.id == funcName)
+        const params = input.input? JSON.stringify(input.input): '{}'
+        if (index == -1) {
+            throw new Error(`Function ${funcName} not found`)
+        }
+        let cmd_args_map:{ [key: string]: string } = {
+            'repeat': '1',
+            'launch': 'tradition',
+            'transmode': 'allTCP',
+            'profile': `${process.cwd()}/${app.$ir.name}.yaml`,
+            'stage': funcName,
+            'params': params
+        }
+        let com_args = [
+            '-m',
+            'serverless_framework.invoke'
+        ]
+        if (provider.output.invoke) {
+            for (let [key,value] of Object.entries(provider.output.invoke)) {
+                cmd_args_map[key] = value
+            }
+        }
+        for (let [key, value] of Object.entries(cmd_args_map)) {
+            console.log(`Parse config ${key}=${value}`)
+            com_args.push(`--${key}`)
+            com_args.push(value)
+        }
+        const proc = ctx.rt.runCommand(`python`, {
+            args: com_args,
+            cwd: ctx.cwd,
+            stdio: 'inherit'
+        })
+
+        let result = ''
+        await Promise.all([
+            proc.readOut(v => {
+                result += v
+            }),
+            proc.readErr(v => {
+                console.log(v)
+            }),
+        ])
+        await proc.wait()
+    }
+    async invoke(input: faas.ProviderInvokeInput, ctx: faas.ProviderPluginContext) {
+        if (input.funcName) {
+            await this.invokeFunction(input, ctx)
+        } else {
+            await this.invokeWorkflow(input, ctx)
+        }
     }
 }
 
