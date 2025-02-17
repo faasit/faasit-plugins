@@ -2,7 +2,7 @@ import { ft_utils } from '@faasit/core'
 import { faas } from '@faasit/std'
 import axios from 'axios'
 import yaml from 'js-yaml'
-
+import fs from 'fs'
 import path from 'path'
 import AdmZip from 'adm-zip'
 
@@ -31,6 +31,45 @@ function getNormalizedFuncName(app: faas.Application, funcName: string) {
 
 class KnativeProvider implements faas.ProviderPlugin {
   name: string = 'knative'
+
+  async build(input: faas.ProviderDeployInput, ctx: faas.ProviderPluginContext) {
+    const { app } = input
+    if (app.output.workflow) {
+      const image = 'faasit-python-runtime:0.2'
+      const app_name = app.$ir.name
+      await this.build_docker_image(image, `${app_name}-executor:tmp`, app.output.workflow.value.output.codeDir, ctx)
+      for (const fnRef of app.output.workflow.value.output.functions) {
+        const fn = fnRef.value
+        const codeDir = fn.output.codeDir
+        const imageName = `${app_name}-${fn.$ir.name}:tmp`
+        await this.build_docker_image(image, imageName, codeDir, ctx)
+      }
+    }
+  }
+
+  async build_docker_image(baseImageName: string, imageName: string, codeDir: string, ctx: faas.ProviderPluginContext) {
+    const { rt, logger } = ctx
+    logger.info(`Building docker image ${imageName}`)
+    let build_commands = []
+    build_commands.push(`FROM ${baseImageName}`)
+    build_commands.push(`COPY ${codeDir} /code`)
+    build_commands.push(`WORKDIR /code`)
+    if (fs.existsSync(path.join(codeDir, 'requirements.txt'))) {
+      build_commands.push(`COPY ${path.join(codeDir, 'requirements.txt')} /requirements.txt`)
+      build_commands.push(`RUN pip install -r /requirements.txt --index-url https://mirrors.aliyun.com/pypi/simple/`)
+    }
+    if (fs.existsSync(path.join(codeDir, 'package.json'))) {
+      build_commands.push(`RUN pnpm install @faasit/runtime`)
+    }
+    const dockerfile = build_commands.join('\n')
+    await rt.writeFile(`${imageName}.dockerfile`, dockerfile)
+    const proc = rt.runCommand('docker', {
+      args: ['build', '--no-cache', '-t', `${imageName}`, '-f', `${imageName}.dockerfile`, '.'],
+      cwd: process.cwd(),
+      stdio: 'inherit'
+    })
+    await proc.wait()
+  }
 
   async deploy(input: faas.ProviderDeployInput, ctx: faas.ProviderPluginContext) {
     if (faas.isWorkflowApplication(input.app)) {
@@ -68,10 +107,10 @@ class KnativeProvider implements faas.ProviderPlugin {
     //   proxy: false
     // })
 
-    const data = { event: input?.input || {}, metadata: {}}
+    const data = { event: input?.input || {}, metadata: {} }
     const resp = await axiosInstance.post(url, data, { headers: { 'Content-Type': 'application/json' }, proxy: false })
 
-    console.log(resp.data)
+    console.log(JSON.stringify(resp.data, null, 2))
 
     logger.info(`invoked function ${input.funcName}`)
     return resp.data
@@ -101,7 +140,7 @@ class KnativeProvider implements faas.ProviderPlugin {
 
     // deploy executor function
     functionsToDeploy.push({
-      name: '__executor',
+      name: 'executor',
       codeDir: workflow.codeDir,
       runtime: workflow.runtime
     })
@@ -192,11 +231,11 @@ class KnativeProvider implements faas.ProviderPlugin {
 
     logger.info(`  > deploy function ${fnParams.name}`)
 
-    let imageName = "faasit-python-runtime:0.0.1"
-    let runCommand:String[] = []
-    let runArgs:String[] = []
+    let imageName = "faasit-python-runtime:0.2"
+    let runCommand: String[] = []
+    let runArgs: String[] = []
     if (fnParams.runtime == 'python') {
-      imageName = "faasit-python-runtime:0.0.1"
+      imageName = "faasit-python-runtime:0.2"
       runCommand.push('python')
       runArgs.push('/app/server.py')
     } else if (fnParams.runtime == 'nodejs') {
@@ -209,26 +248,26 @@ class KnativeProvider implements faas.ProviderPlugin {
 
     const funcName = getNormalizedFuncName(p.input.app, fnParams.name)
     const svcName = fnParams.name != '__executor' ? funcName : getNormalizedFuncName(p.input.app, 'executor')
-    const getNginxProc = rt.runCommand(`kubectl get svc | grep nginx-file-server | awk '{print $3}'`, {
-      cwd: process.cwd(),
-      shell: true
-    })
-    let nginxIP = ''
-    getNginxProc.readOut(v => {
-      nginxIP = String(v).replace('\n', '')
-    })
+    // const getNginxProc = rt.runCommand(`kubectl get svc | grep nginx-file-server | awk '{print $3}'`, {
+    //   cwd: process.cwd(),
+    //   shell: true
+    // })
+    // let nginxIP = ''
+    // getNginxProc.readOut(v => {
+    //   nginxIP = String(v).replace('\n', '')
+    // })
 
-    const getRedisProc = rt.runCommand(`kubectl get svc | grep faasit-redis | awk '{print $3}'`, {
-      cwd: process.cwd(),
-      shell: true
-    })
-    let redisIP = ''
-    getRedisProc.readOut(v => {
-      redisIP = String(v).replace('\n', '')
-    })
+    // const getRedisProc = rt.runCommand(`kubectl get svc | grep faasit-redis | awk '{print $3}'`, {
+    //   cwd: process.cwd(),
+    //   shell: true
+    // })
+    // let redisIP = ''
+    // getRedisProc.readOut(v => {
+    //   redisIP = String(v).replace('\n', '')
+    // })
 
-    await getNginxProc.wait()
-    await getRedisProc.wait()
+    // await getNginxProc.wait()
+    // await getRedisProc.wait()
 
     const funcObj = {
       apiVersion: 'serving.knative.dev/v1',
@@ -242,7 +281,7 @@ class KnativeProvider implements faas.ProviderPlugin {
           spec: {
             containers: [
               {
-                image: `${registry}/xdydy/${imageName}`,
+                image: `192.168.28.220:5000/library/${funcName}:tmp`,
                 imagePullPolicy: "IfNotPresent",
                 ports: [{ "containerPort": 9000 }],
                 readinessProbe: {
@@ -288,14 +327,6 @@ class KnativeProvider implements faas.ProviderPlugin {
                     value: normalizeDnsName(p.input.app.$ir.name)
                   },
                   {
-                    name: 'CODE_IP',
-                    value: nginxIP
-                  },
-                  {
-                    name: 'REDIS_HOST',
-                    value: redisIP
-                  },
-                  {
                     name: 'REDIS_PORT',
                     value: '6379'
                   }
@@ -308,31 +339,31 @@ class KnativeProvider implements faas.ProviderPlugin {
         }
       }
     }
-    const zipFile = await this.packFuncCode({ codeDir: fnParams.codeDir, fnName: funcName })
-    // 获取名称包含funcName的pod的名称
-    const getPodProc = rt.runCommand(`kubectl get pod | grep nginx-file-server | awk '{print $1}'`, {
-      cwd: process.cwd(),
-      shell: true
-    })
-    let podName: string = '';
-    getPodProc.readOut(v => {
-      podName = String(v).replace('\n', '')
-      logger.info(`podName: ${podName}`)
-    })
-    await getPodProc.wait()
+    // const zipFile = await this.packFuncCode({ codeDir: fnParams.codeDir, fnName: funcName })
+    // // 获取名称包含funcName的pod的名称
+    // const getPodProc = rt.runCommand(`kubectl get pod | grep nginx-file-server | awk '{print $1}'`, {
+    //   cwd: process.cwd(),
+    //   shell: true
+    // })
+    // let podName: string = '';
+    // getPodProc.readOut(v => {
+    //   podName = String(v).replace('\n', '')
+    //   logger.info(`podName: ${podName}`)
+    // })
+    // await getPodProc.wait()
 
-    logger.info(`Deploy ${zipFile} to Pod ${podName}`)
-    const cpProc = rt.runCommand(`kubectl cp ${zipFile} ${podName}:/data/uploads`, {
-      cwd: process.cwd(),
-      shell: true,
-      stdio: 'inherit'
-    })
-    await Promise.all([
-      cpProc.readOut(v => logger.info(v)),
-      cpProc.readErr(v => logger.error(v))
-    ])
-    await cpProc.wait()
-    await rt.removeFile(zipFile)
+    // logger.info(`Deploy ${zipFile} to Pod ${podName}`)
+    // const cpProc = rt.runCommand(`kubectl cp ${zipFile} ${podName}:/data/uploads`, {
+    //   cwd: process.cwd(),
+    //   shell: true,
+    //   stdio: 'inherit'
+    // })
+    // await Promise.all([
+    //   cpProc.readOut(v => logger.info(v)),
+    //   cpProc.readErr(v => logger.error(v))
+    // ])
+    // await cpProc.wait()
+    // await rt.removeFile(zipFile)
 
     return funcObj
   }

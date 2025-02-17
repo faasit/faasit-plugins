@@ -3,6 +3,7 @@ import Admzip from 'adm-zip'
 import Util, * as $Util from '@alicloud/tea-util'
 
 export class AliyunFunction {
+  readonly layer: string
   constructor(private opt: {
     client: FC_Open20210406,
     serviceName: string,
@@ -12,6 +13,11 @@ export class AliyunFunction {
     handler: string,
     env?: { [key: string]: any }
   }) {
+    const region = 'cn-hangzhou'
+    const accountId = process.env.FAASIT_SECRET_ALIYUN_ACCOUNT_ID
+    const version = '24'
+    const layer_name = 'ft-rt-py'
+    this.layer = `acs:fc:${region}:${accountId}:layers/${layer_name}/versions/${version}`
   }
 
   private zipFolderAndEncode() {
@@ -28,13 +34,16 @@ export class AliyunFunction {
     })
     let createFunctionHeaders = new $FC_Open20210406.CreateFunctionHeaders({});
     let createFunctionRequests = new $FC_Open20210406.CreateFunctionRequest({
+      layers: [this.layer],
       functionName: this.opt.functionName,
       handler: this.opt.handler,
       runtime: this.opt.runtime,
       code: code,
       environmentVariables: this.opt.env
     });
-    let runtime = new $Util.RuntimeOptions({});
+    let runtime = new $Util.RuntimeOptions({
+      connectTimeout: 10000
+    });
     try {
       const resp = await this.opt.client.createFunctionWithOptions(
         this.opt.serviceName,
@@ -65,13 +74,16 @@ export class AliyunFunction {
     })
     let headers = new $FC_Open20210406.UpdateFunctionHeaders({});
     let requests = new $FC_Open20210406.UpdateFunctionRequest({
+      layers : [this.layer],
       functionName: this.opt.functionName,
       handler: this.opt.handler,
       runtime: this.opt.runtime,
       code: code,
       environmentVariables: this.opt.env
     });
-    let runtime = new $Util.RuntimeOptions({});
+    let runtime = new $Util.RuntimeOptions({
+      connectTimeout: 10000
+    });
     try {
       const resp = await this.opt.client.updateFunctionWithOptions(
         this.opt.serviceName,
@@ -87,7 +99,7 @@ export class AliyunFunction {
 
   async invoke(event: any): Promise<$FC_Open20210406.InvokeFunctionResponse | undefined> {
     let invokeFunctionRequests = new $FC_Open20210406.InvokeFunctionRequest({
-      body: event ? Util.toBytes(JSON.stringify(event)) : ''
+      body: event ? Util.toBytes(JSON.stringify(event)) : Util.toBytes(JSON.stringify({}))
     });
     try {
       const resp = await this.opt.client.invokeFunction(this.opt.serviceName, this.opt.functionName, invokeFunctionRequests);

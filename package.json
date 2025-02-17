@@ -66,9 +66,17 @@
       "require": "./dist/providers/tencentyun.cjs",
       "import": "./dist/providers/tencentyun.mjs"
     },
+    "./providers/k8s":{
+      "require": "./dist/providers/k8s.cjs",
+      "import": "./dist/providers/k8s.mjs"
+    },
     "./generators/nodejs": {
       "require": "./dist/generators/nodejs.cjs",
       "import": "./dist/generators/nodejs.mjs"
+    },
+    "./providers/pku": {
+      "require": "./dist/providers/pku.cjs",
+      "import": "./dist/providers/pku.mjs"
     }
   }
 }

@@ -1,9 +1,10 @@
 import { faas } from '@faasit/std'
 import * as Trigger from "./utils/trigger";
-import axios from "axios";
 import { AliyunFunction, AliyunService, AliyunTrigger, AliyunSecretType, parseAliyunSecret } from './utils'
 import { createClient } from './utils/client';
 import Client from '@alicloud/fc-open20210406';
+import fs from 'fs'
+import path from 'path';
 
 
 interface DeployParams {
@@ -21,6 +22,28 @@ interface DeployFunctionParams {
 class AliyunProvider implements faas.ProviderPlugin {
 	name: string = 'aliyun'
 
+	async build(input: faas.ProviderDeployInput, ctx: faas.ProviderPluginContext) {
+		const { app } = input
+		const { logger,rt } = ctx
+		logger.info(`build ${app.$ir.name} on aliyun`)
+		if (app.output.workflow) {
+			for (const fnRef of app.output.workflow.value.output.functions) {
+				const fn = fnRef.value
+				logger.info(`build function ${fn.$ir.name}`)
+				const codeDir = fn.output.codeDir
+				const runtime = fn.output.runtime
+				if (runtime == 'python' && fs.existsSync(path.join(codeDir,'requirements.txt'))) {
+					logger.info(`install ${fn.$ir.name} python runtime requirements`)
+					const proc = rt.runCommand('pip', {
+						args:['install', '-r', 'requirements.txt', '-t', '.'],  
+						cwd: codeDir ,  
+						stdio: 'inherit' 
+					})
+					await proc.wait()
+				}
+			}
+		}
+	}
 
 	async deploy(input: faas.ProviderDeployInput, ctx: faas.ProviderPluginContext) {
 		const { rt, logger } = ctx

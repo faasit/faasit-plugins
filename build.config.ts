@@ -19,7 +19,7 @@ function GeneratorEntry(name: string): BuildEntry {
 export default defineBuildConfig([
   {
     entries: [
-      'aliyun', 'aws', 'knative', 'local', 'local-once', 'openfaas', 'tencentyun'
+      'aliyun', 'aws', 'knative', 'local', 'local-once', 'openfaas', 'tencentyun','k8s','pku'
     ].map(v => ProviderEntry(v)),
     rollup: {
       emitCJS: true,

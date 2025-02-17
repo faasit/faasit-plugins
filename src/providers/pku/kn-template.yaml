@@ -1,0 +1,37 @@
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: __app-name__-__stage-name__
+  namespace: default
+  
+spec:
+  template:
+    metadata:
+      # name: __app-name__-__stage-name__
+      labels:
+        app: __app-name__-__stage-name__
+      annotations:
+        autoscaling.knative.dev/max-scale: "1"
+        autoscaling.knative.dev/min-scale: "1"
+        autoscaling.knative.dev/target: "500"
+        autoscaling.knative.dev/metric: "concurrency"
+    spec:
+      # nodeSelector:
+      #   kubernetes.io/hostname: __node-name__
+      containers:
+        - name: my-container
+          image: __image__
+          imagePullPolicy: IfNotPresent
+          command: __command__
+          args: __args__
+          ports:
+          - containerPort: __worker-port__
+
+          volumeMounts:
+          - name: spilot-redis-config
+            readOnly: true
+            mountPath: "/etc/spilot-redis-config"
+      volumes:
+      - name: spilot-redis-config
+        secret:
+          secretName: spilot-redis-config
