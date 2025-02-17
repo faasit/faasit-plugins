@@ -128,7 +128,7 @@ export default function TencentyunPlugin(): faas.ProviderPlugin {
       })
     },
 
-    async invoke(input, ctx) {
+    async invoke(input, ctx): Promise<string | undefined> {
       const { logger } = ctx
 
       logger.info(`Invoke function ${input.funcName}`)
@@ -139,9 +139,11 @@ export default function TencentyunPlugin(): faas.ProviderPlugin {
         const result = await client.Invoke(params)
         logger.info(`Invoke requestId: ${result.RequestId}`)
         console.info(result.Result)
+        return result.Result.RetMsg
       } catch (err) {
         logger.error(`Error happens when invoking function ${input.funcName}`)
         logger.error(err)
+        return undefined
       }
     },
   }

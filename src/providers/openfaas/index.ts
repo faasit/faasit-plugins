@@ -53,7 +53,7 @@ export default function OpenFaasPlugin(): faas.ProviderPlugin {
       }
     },
 
-    async invoke(input, ctx) {
+    async invoke(input, ctx): Promise<string | undefined> {
       const { rt, logger } = ctx
 
       logger.info(`invoke function ${input.funcName}`)
@@ -67,6 +67,7 @@ export default function OpenFaasPlugin(): faas.ProviderPlugin {
         proc.readErr(v => logger.error(v))
       ])
       await proc.wait()
+      return undefined
     },
   }
 }

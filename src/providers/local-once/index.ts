@@ -36,7 +36,7 @@ class LocalOnceProvider implements faas.ProviderPlugin {
     await this.deployFunction(ctx, inputData, func.value)
   }
 
-  async invoke(input: faas.ProviderInvokeInput, ctx: faas.ProviderPluginContext) {
+  async invoke(input: faas.ProviderInvokeInput, ctx: faas.ProviderPluginContext): Promise<string | undefined> {
     throw new Error('not implemented');
   }
 

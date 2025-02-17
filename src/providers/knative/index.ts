@@ -39,7 +39,7 @@ class KnativeProvider implements faas.ProviderPlugin {
     return this.deployFunctionApp({ ctx, input })
   }
 
-  async invoke(input: faas.ProviderInvokeInput, ctx: faas.ProviderPluginContext) {
+  async invoke(input: faas.ProviderInvokeInput, ctx: faas.ProviderPluginContext): Promise<string | undefined> {
     const { rt, logger } = ctx
     const { app } = input
 
@@ -74,6 +74,7 @@ class KnativeProvider implements faas.ProviderPlugin {
     console.log(resp.data)
 
     logger.info(`invoked function ${input.funcName}`)
+    return resp.data
   }
 
   // helpers

@@ -34,7 +34,7 @@ class AliyunProvider implements faas.ProviderPlugin {
 		}
 	}
 
-	async invoke(input: faas.ProviderInvokeInput, ctx: faas.ProviderPluginContext) {
+	async invoke(input: faas.ProviderInvokeInput, ctx: faas.ProviderPluginContext): Promise<string | undefined> {
 		const { rt, logger } = ctx;
 		const { app } = input;
 		const secret = parseAliyunSecret(ctx.env)
@@ -68,6 +68,7 @@ class AliyunProvider implements faas.ProviderPlugin {
 		const resp = await aliyunFunc.invoke(input.input)
 		logger.info("function invoke results:");
 		console.log(resp?.body.toString());
+		return resp?.body.toString();
 		// const functions = app.output.workflow? : app
 		// for (const fnRef of app.output.functions) {
 

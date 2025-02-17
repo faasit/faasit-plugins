@@ -42,7 +42,7 @@ class AwsProvider implements faas.ProviderPlugin {
     return this.deployFunctionApp({ ctx, input, secret })
   }
 
-  async invoke(input: faas.ProviderInvokeInput, ctx: faas.ProviderPluginContext) {
+  async invoke(input: faas.ProviderInvokeInput, ctx: faas.ProviderPluginContext): Promise<string | undefined> {
     const secret = parseAwsSecret(ctx.env)
     const lambda = this.createLambda({ secret });
     const params = {
@@ -52,6 +52,7 @@ class AwsProvider implements faas.ProviderPlugin {
     const response = await lambda.invoke(params);
     const obj = response.Payload?.transformToString();
     console.log(JSON.parse(obj || 'null'))
+    return obj
   }
 
   async deployWorkflowApp(p: DeployParams, app: faas.WorkflowApplication) {

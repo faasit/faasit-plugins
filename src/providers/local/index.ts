@@ -227,7 +227,7 @@ class LocalProvider implements faas.ProviderPlugin {
         }
 
     }
-    async invoke(input: faas.ProviderInvokeInput, ctx: faas.ProviderPluginContext) {
+    async invoke(input: faas.ProviderInvokeInput, ctx: faas.ProviderPluginContext): Promise<string | undefined> {
         const { rt, logger } = ctx
         const { app, funcName } = input
 
@@ -238,6 +238,7 @@ class LocalProvider implements faas.ProviderPlugin {
         const url = `http://localhost:9000/${funcName}`
         const resp = await axiosInstance.post(url, input.input ? input.input : {})
         console.log(resp.data);
+        return resp.data
     }
 }
 
