@@ -30,7 +30,12 @@ spec:
       image: __image__
       imagePullPolicy: IfNotPresent
       command: __command__
-      args: __args__    
+      args: __args__
+      resources:
+        requests:
+          cpu: __r_vcpu__
+        limits:
+          cpu: __r_vcpu__
       securityContext:
         privileged: __privileged__
       volumeMounts:

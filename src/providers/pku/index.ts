@@ -104,36 +104,7 @@ class PKUProvider implements faas.ProviderPlugin {
         return yaml.dump(spilot_yaml)
     }
 
-    async python_generate_dag(codeDir:string, ctx: faas.ProviderPluginContext) {
-        const pythonCode = `
-import json
-import os
-os.environ["FAASIT_PROVIDER"]="pku"
-from index import handler
-output = handler()
-print(output)
-    `.trim() 
-        const proc = ctx.rt.runCommand(`python`, {
-            args: ['-c', pythonCode],
-            cwd: codeDir,
-            stdio: 'pipe'
-        })
-
-        let result = ''
-        await Promise.all([
-            proc.readOut(v => {
-                result += v
-            }),
-            proc.readErr(v => {
-                console.log(v)
-            }),
-        ])
-        await proc.wait()
-        result = result.replace(/'/g, '"')
-        result = JSON.parse(result)
-        result = yaml.dump(result)
-        return result
-    }
+    
 
     async node_generate_dag(job_name:string, ctx: faas.ProviderPluginContext) {
         const data = {
@@ -283,6 +254,36 @@ print(output)
     
         }
         async function deploy_workflow_app() {
+            async function python_generate_dag(codeDir:string, ctx: faas.ProviderPluginContext) {
+                const pythonCode = `
+import json
+import os
+os.environ["FAASIT_PROVIDER"]="pku"
+from index import handler
+output = handler()
+print(output)
+            `.trim() 
+                const proc = ctx.rt.runCommand(`python`, {
+                    args: ['-c', pythonCode],
+                    cwd: codeDir,
+                    stdio: 'pipe'
+                })
+        
+                let result = ''
+                await Promise.all([
+                    proc.readOut(v => {
+                        result += v
+                    }),
+                    proc.readErr(v => {
+                        console.log(v)
+                    }),
+                ])
+                await proc.wait()
+                result = result.replace(/'/g, '"')
+                result = JSON.parse(result)
+                result = yaml.dump(result)
+                return result
+            }
             if (!app.output.workflow) {
                 throw new Error("Workflow not found")
             }
@@ -307,7 +308,7 @@ print(output)
                     const stage: stage = {
                         name: fn.$ir.name,
                         request: {
-                            vcpu: fn.output.resource? parseInt(fn.output.resource.cpu) : 1
+                            vcpu: fn.output.resource? parseFloat(fn.output.resource.cpu) : 1
                         },
                         image: fn_image_name,
                         codeDir: fn.output.codeDir,
@@ -321,7 +322,7 @@ print(output)
             if (runtime == 'nodejs') {
                 dag_yaml = await this.node_generate_dag(job_name, ctx)
             } else {
-                dag_yaml = await this.python_generate_dag(app.output.workflow.value.output.codeDir, ctx) 
+                dag_yaml = await python_generate_dag(app.output.workflow.value.output.codeDir, ctx) 
             }
             app_yaml = app_yaml + '\n' + dag_yaml
             await rt.writeFile(`${app.$ir.name}.yaml`, app_yaml)
@@ -444,7 +445,7 @@ print(output)
         await proc.wait()
     }
     async invoke(input: faas.ProviderInvokeInput, ctx: faas.ProviderPluginContext) {
-        if (input.funcName) {
+        if (!faas.isWorkflowApplication(input.app)) {
             await this.invokeFunction(input, ctx)
         } else {
             await this.invokeWorkflow(input, ctx)
