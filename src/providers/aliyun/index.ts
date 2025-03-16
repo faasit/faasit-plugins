@@ -26,21 +26,36 @@ class AliyunProvider implements faas.ProviderPlugin {
 		const { app } = input
 		const { logger,rt } = ctx
 		logger.info(`build ${app.$ir.name} on aliyun`)
+		function buildFunction(fn: faas.Function) {
+			const codeDir = fn.output.codeDir
+			const runtime = fn.output.runtime
+			logger.info(`build function ${fn.$ir.name}`)
+			if (runtime == 'python' && fs.existsSync(path.join(codeDir,'requirements.txt'))) {
+				logger.info(`install ${fn.$ir.name} python runtime requirements`)
+				const proc = rt.runCommand('pip', {
+					args:[
+						'install', 
+						'-r', 
+						'requirements.txt', 
+						'-t', 
+						'./venv', 
+						'--index-url',
+						'http://localhost:12121',
+						'--upgrade'
+					],  
+					cwd: codeDir ,  
+					stdio: 'inherit' 
+				})
+				return proc.wait()
+			}
+		}
 		if (app.output.workflow) {
 			for (const fnRef of app.output.workflow.value.output.functions) {
-				const fn = fnRef.value
-				logger.info(`build function ${fn.$ir.name}`)
-				const codeDir = fn.output.codeDir
-				const runtime = fn.output.runtime
-				if (runtime == 'python' && fs.existsSync(path.join(codeDir,'requirements.txt'))) {
-					logger.info(`install ${fn.$ir.name} python runtime requirements`)
-					const proc = rt.runCommand('pip', {
-						args:['install', '-r', 'requirements.txt', '-t', '.'],  
-						cwd: codeDir ,  
-						stdio: 'inherit' 
-					})
-					await proc.wait()
-				}
+				buildFunction(fnRef.value)
+			}
+		} else {
+			for (const fnRef of app.output.functions) {
+				buildFunction(fnRef.value)
 			}
 		}
 	}
@@ -91,51 +106,6 @@ class AliyunProvider implements faas.ProviderPlugin {
 		const resp = await aliyunFunc.invoke(input.input)
 		logger.info("function invoke results:");
 		console.log(resp?.body.toString());
-		// const functions = app.output.workflow? : app
-		// for (const fnRef of app.output.functions) {
-
-		// 	const fn = fnRef.value
-		// 	logger.info(`invoke function ${fn.$ir.name}`);
-		// 	const triggers = fn.output.triggers || []
-
-		// 	if (triggers.length > 0 && triggers[0].kind == 'http') {
-		// 		let aliyunTrigger = new AliyunTrigger(
-		// 			{
-		// 				client,
-		// 				serviceName,
-		// 				functionName: fn.$ir.name,
-		// 				triggerName: triggers[0].name,
-		// 				triggerType: 'http',
-		// 				triggerOpts: {},
-		// 			}
-		// 		)
-
-		// 		const triggerResp = await aliyunTrigger.get()
-		// 		const urlInternet = triggerResp?.body.urlInternet || "";
-		// 		const urlWithoutHttp = urlInternet.replace(/^(http|https):\/\//, "");
-
-		// 		const invokeResp = await axios.post(urlInternet, input.input)
-		// 		logger.info("function invoke results:");
-		// 		console.log(invokeResp.data);
-
-		// 	} else {
-		// 		let aliyunFunc = new AliyunFunction(
-		// 			{
-		// 				client,
-		// 				serviceName,
-		// 				functionName: fn.$ir.name,
-		// 				codeDir: fn.output.codeDir,
-		// 				runtime: fn.output.runtime,
-		// 				handler: fn.output.handler ? fn.output.handler : "index.handler",
-		// 			}
-		// 		)
-		// 		await aliyunFunc.invoke(input.input).then(resp => {
-		// 			if (resp) {
-		// 				logger.info(resp.body.toString());
-		// 			}
-		// 		})
-		// 	}
-		// }
 	}
 
 	async deployOneFunction(
@@ -179,6 +149,7 @@ class AliyunProvider implements faas.ProviderPlugin {
 				// OSS
 				ALIBABA_CLOUD_OSS_BUCKET_NAME: process.env.ALIBABA_CLOUD_OSS_BUCKET_NAME, // faasit
 				ALIBABA_CLOUD_OSS_REGION: process.env.ALIBABA_CLOUD_OSS_REGION, // oss-cn-hangzhou
+				PYTHONPATH: '/code/venv'
 			}
 		})
 		await func.get().then(async getFunctionResp => {
