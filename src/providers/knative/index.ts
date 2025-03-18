@@ -5,6 +5,8 @@ import yaml from 'js-yaml'
 import fs from 'fs'
 import path from 'path'
 import AdmZip from 'adm-zip'
+import Docker from 'dockerode'
+import { randomUUID } from 'crypto'
 
 interface DeployParams {
   ctx: faas.ProviderPluginContext
@@ -13,9 +15,14 @@ interface DeployParams {
 }
 
 interface DeployFunctionParams {
+  file: string
   name: string
+  function_name: string
   codeDir: string
   runtime: string
+  cpu: number
+  memory: number
+  registry?: string
 }
 
 function normalizeDnsName(dnsName: string) {
@@ -32,44 +39,96 @@ function getNormalizedFuncName(app: faas.Application, funcName: string) {
 class KnativeProvider implements faas.ProviderPlugin {
   name: string = 'knative'
 
-  async build(input: faas.ProviderDeployInput, ctx: faas.ProviderPluginContext) {
-    const { app } = input
+  async get_base_image(baseImage: string | undefined): Promise<string> {
+    if (baseImage) {
+      return baseImage
+    }
+    const docker = new Docker();
+    const images = await docker.listImages({
+      filters: {
+        reference: ['faasit-runtime']
+      }
+    });
+    if (images.length == 0) {
+      console.warn(`Base image faasit-runtime not found, using default image`)
+      return 'faasit-runtime'
+    }
+    const image_tags = images.flatMap(image => image.RepoTags).sort()
+    return image_tags.at(-1) || 'faasit-runtime';
+  }
+
+  async build(input: faas.ProviderBuildInput, ctx: faas.ProviderPluginContext) {
+    const { app, provider } = input
+    const registry = provider.output.registry? provider.output.registry : '192.168.28.220:5000'
+    const image = await this.get_base_image(undefined)
+    const app_name = app.$ir.name
+    async function push_image(imageName: string, registry: string, ctx: faas.ProviderPluginContext) {
+      const { rt, logger } = ctx
+      const proc = rt.runCommand('docker', {
+        args: ['tag', imageName, `${registry}/library/${imageName}`],
+        cwd: process.cwd(),
+        stdio: 'inherit'
+      })
+      await proc.wait()
+      logger.info(`> Pushing image ${registry}/library/${imageName} to registry ${registry}...`)
+      const proc2 = rt.runCommand('docker', {
+        args: ['push', `${registry}/library/${imageName}`],
+        cwd: process.cwd(),
+        stdio: 'inherit'
+      })
+      await proc2.wait()
+    }
+    async function build_docker_image(
+      baseImageName: string,
+      imageName: string,
+      codeDir: string,
+      ctx: faas.ProviderPluginContext,
+      registry?: string
+    ) {
+      const { rt, logger } = ctx
+      logger.info(`Building docker image ${imageName}`)
+      let build_commands = []
+      build_commands.push(`FROM ${baseImageName}`)
+      build_commands.push(`COPY ${codeDir} /code`)
+      build_commands.push(`WORKDIR /code`)
+      if (fs.existsSync(path.join(codeDir, 'requirements.txt'))) {
+        build_commands.push(`COPY ${path.join(codeDir, 'requirements.txt')} /requirements.txt`)
+        build_commands.push(`RUN pip install -r /requirements.txt --index-url https://mirrors.aliyun.com/pypi/simple/`)
+      }
+      if (fs.existsSync(path.join(codeDir, 'package.json'))) {
+        build_commands.push(`RUN pnpm install @faasit/runtime`)
+      }
+      const dockerfile = build_commands.join('\n')
+      await rt.writeFile(`${imageName}.dockerfile`, dockerfile)
+      const proc = rt.runCommand('docker', {
+        args: ['build', '--no-cache', '-t', `${imageName}`, '-f', `${imageName}.dockerfile`, '.'],
+        cwd: process.cwd(),
+        stdio: 'inherit'
+      })
+      await proc.wait()
+      if (registry) {
+        await push_image(imageName, registry, ctx)
+      }
+    }
+    function build_function_image(fn: faas.Function) {
+      const codeDir = fn.output.codeDir
+      const imageName = `${app_name}-${fn.$ir.name}:tmp`
+      return build_docker_image(image, imageName, codeDir, ctx, registry)
+    }
     if (app.output.workflow) {
-      const image = 'faasit-python-runtime:0.2'
-      const app_name = app.$ir.name
-      await this.build_docker_image(image, `${app_name}-executor:tmp`, app.output.workflow.value.output.codeDir, ctx)
       for (const fnRef of app.output.workflow.value.output.functions) {
-        const fn = fnRef.value
-        const codeDir = fn.output.codeDir
-        const imageName = `${app_name}-${fn.$ir.name}:tmp`
-        await this.build_docker_image(image, imageName, codeDir, ctx)
+        build_function_image(fnRef.value)
+      }
+    } else {
+      for (const fnRef of app.output.functions) {
+        build_function_image(fnRef.value);
       }
     }
   }
 
-  async build_docker_image(baseImageName: string, imageName: string, codeDir: string, ctx: faas.ProviderPluginContext) {
-    const { rt, logger } = ctx
-    logger.info(`Building docker image ${imageName}`)
-    let build_commands = []
-    build_commands.push(`FROM ${baseImageName}`)
-    build_commands.push(`COPY ${codeDir} /code`)
-    build_commands.push(`WORKDIR /code`)
-    if (fs.existsSync(path.join(codeDir, 'requirements.txt'))) {
-      build_commands.push(`COPY ${path.join(codeDir, 'requirements.txt')} /requirements.txt`)
-      build_commands.push(`RUN pip install -r /requirements.txt --index-url https://mirrors.aliyun.com/pypi/simple/`)
-    }
-    if (fs.existsSync(path.join(codeDir, 'package.json'))) {
-      build_commands.push(`RUN pnpm install @faasit/runtime`)
-    }
-    const dockerfile = build_commands.join('\n')
-    await rt.writeFile(`${imageName}.dockerfile`, dockerfile)
-    const proc = rt.runCommand('docker', {
-      args: ['build', '--no-cache', '-t', `${imageName}`, '-f', `${imageName}.dockerfile`, '.'],
-      cwd: process.cwd(),
-      stdio: 'inherit'
-    })
-    await proc.wait()
-  }
+  
+
+  
 
   async deploy(input: faas.ProviderDeployInput, ctx: faas.ProviderPluginContext) {
     if (faas.isWorkflowApplication(input.app)) {
@@ -87,11 +146,33 @@ class KnativeProvider implements faas.ProviderPlugin {
 
     const getSvcName = () => {
       if (faas.isWorkflowApplication(app)) {
-        return getNormalizedFuncName(app, 'executor')
+        return getNormalizedFuncName(app, app.output.workflow.value.$ir.name)
       }
 
       return getNormalizedFuncName(app, input.funcName)
     }
+    const getRouter = () => {
+      let router: Record<string,string> = {}
+      if (faas.isWorkflowApplication(app)) {
+        for (const fnRef of app.output.workflow.value.output.functions) {
+          const fn = fnRef.value
+          const funcName = getNormalizedFuncName(app, fn.$ir.name)
+          router[fn.$ir.name] = `http://${funcName}.default.10.0.0.233.sslip.io`
+        }
+      } else {
+        for (const fnRef of app.output.functions) {
+          const fn = fnRef.value
+          const funcName = getNormalizedFuncName(app, fn.$ir.name)
+          router[fn.$ir.name] = `http://${funcName}.default.10.0.0.233.sslip.io`
+        }
+      }
+      return router
+    }
+    const id = randomUUID()
+    const router = getRouter()
+    const namespace = app.$ir.name
+    const type = 'invoke'
+    const params = input.input
 
     const svcName = getSvcName()
     // const svcName = `${app.$ir.name}-${input.funcName}`
@@ -108,7 +189,14 @@ class KnativeProvider implements faas.ProviderPlugin {
     // })
 
     const data = { event: input?.input || {}, metadata: {} }
-    const resp = await axiosInstance.post(url, data, { headers: { 'Content-Type': 'application/json' }, proxy: false })
+    const _metadata = {
+      id: id,
+      namespace: namespace,
+      type: type,
+      params: params,
+      router: router
+    }
+    const resp = await axiosInstance.post(url, _metadata, { headers: { 'Content-Type': 'application/json' }, proxy: false })
 
     console.log(JSON.stringify(resp.data, null, 2))
 
@@ -117,7 +205,7 @@ class KnativeProvider implements faas.ProviderPlugin {
 
   // helpers
   async deployWorkflowApp(p: DeployParams, app: faas.WorkflowApplication) {
-    const { ctx } = p
+    const { ctx, input } = p
     const { rt, logger } = ctx
 
     logger.info(`deploy workflow on knative`)
@@ -128,20 +216,36 @@ class KnativeProvider implements faas.ProviderPlugin {
     for (const fnRef of workflow.functions) {
       const fn = fnRef.value
       const codeDir = fn.output.codeDir
+      const handler = fn.output.handler? fn.output.handler : "index.handler"
+      const fileName = handler.split('.')[0]
+      const functionName = handler.split('.')[1]
 
       functionsToDeploy.push({
-        name: fnRef.value.$ir.name,
+        file: fileName,
+        name: functionName,
+        function_name: fn.$ir.name,
         // use workflow's codeDir if no codeDir provided by the function
         codeDir: codeDir || workflow.codeDir,
-        runtime: fn.output.runtime
+        runtime: fn.output.runtime,
+        registry: input.provider.output.registry,
+        cpu: fn.output.resource? Number(fn.output.resource.cpu) : 0.5,
+        memory: fn.output.resource? Number(fn.output.resource.memory) : 128
       })
     }
 
     // deploy executor function
+    const handler = workflow.handler? workflow.handler : "index.handler"
+    const fileName = handler.split('.')[0]
+    const functionName = handler.split('.')[1]
     functionsToDeploy.push({
-      name: 'executor',
+      file: fileName,
+      name: app.output.workflow.value.$ir.name,
+      function_name: functionName,
       codeDir: workflow.codeDir,
-      runtime: workflow.runtime
+      runtime: workflow.runtime,
+      registry: input.provider.output.registry,
+      cpu: workflow.resource? Number(workflow.resource.cpu) : 0.5,
+      memory: workflow.resource? Number(workflow.resource.memory) : 128
     })
 
     logger.info(`deploying workflow, functions=${functionsToDeploy.length}`)
@@ -181,15 +285,22 @@ class KnativeProvider implements faas.ProviderPlugin {
     for (const fnRef of app.output.functions) {
       const fn = fnRef.value
       const codeDir = fn.output.codeDir
-
+      const handler = fn.output.handler? fn.output.handler : "index.handler"
+      const fileName = handler.split('.')[0]
+      const functionName = handler.split('.')[1]
       if (!codeDir) {
         throw new Error(`failed to deploy function=${fn.$ir.name}, codeDir is empty`)
       }
 
       functionsToDeploy.push({
-        name: fnRef.value.$ir.name,
+        file: fileName,
+        name: fn.$ir.name,
+        function_name: functionName,
         codeDir: codeDir,
-        runtime: fn.output.runtime
+        runtime: fn.output.runtime,
+        registry: p.input.provider.output.registry,
+        cpu: fn.output.resource? Number(fn.output.resource.cpu) : 0.5,
+        memory: fn.output.resource? Number(fn.output.resource.memory) : 128
       })
     }
 
@@ -221,58 +332,31 @@ class KnativeProvider implements faas.ProviderPlugin {
     logger.info(`deployed functions on knative`)
   }
 
-  async deployOneFunction(p: DeployParams, fnParams: {
-    name: string
-    codeDir: string
-    runtime: string
-  }): Promise<any> {
+  async deployOneFunction(p: DeployParams, fnParams: DeployFunctionParams): Promise<any> {
     const { rt, logger } = p.ctx
 
     logger.info(`  > deploy function ${fnParams.name}`)
-
-    let imageName = "faasit-python-runtime:0.2"
-    let runCommand: String[] = []
-    let runArgs: String[] = []
-    if (fnParams.runtime == 'python') {
-      imageName = "faasit-python-runtime:0.2"
-      runCommand.push('python')
-      runArgs.push('/app/server.py')
-    } else if (fnParams.runtime == 'nodejs') {
-      imageName = "faasit-nodejs-runtime:0.0.1"
-      runCommand.push('node')
-      runArgs.push('/app/server.js')
-    }
-
-    const registry = 'docker.io'
+    const registry = fnParams.registry? fnParams.registry : '192.168.28.220:5000'
 
     const funcName = getNormalizedFuncName(p.input.app, fnParams.name)
-    const svcName = fnParams.name != '__executor' ? funcName : getNormalizedFuncName(p.input.app, 'executor')
-    // const getNginxProc = rt.runCommand(`kubectl get svc | grep nginx-file-server | awk '{print $3}'`, {
-    //   cwd: process.cwd(),
-    //   shell: true
-    // })
-    // let nginxIP = ''
-    // getNginxProc.readOut(v => {
-    //   nginxIP = String(v).replace('\n', '')
-    // })
 
-    // const getRedisProc = rt.runCommand(`kubectl get svc | grep faasit-redis | awk '{print $3}'`, {
-    //   cwd: process.cwd(),
-    //   shell: true
-    // })
-    // let redisIP = ''
-    // getRedisProc.readOut(v => {
-    //   redisIP = String(v).replace('\n', '')
-    // })
-
-    // await getNginxProc.wait()
-    // await getRedisProc.wait()
+    let runCommand: String[] = ['python']
+    let runArgs: String[] = [
+      '-m',
+      'faasit_runtime.worker',
+      '--lambda_file',
+      `/code/${fnParams.file}.py`,
+      '--function_name',
+      fnParams.function_name,
+      '--server_port',
+      '9000'
+    ]
 
     const funcObj = {
       apiVersion: 'serving.knative.dev/v1',
       kind: 'Service',
       metadata: {
-        name: svcName,
+        name: funcName,
         namespace: 'default'
       },
       spec: {
@@ -280,9 +364,15 @@ class KnativeProvider implements faas.ProviderPlugin {
           spec: {
             containers: [
               {
-                image: `192.168.28.220:5000/library/${funcName}:tmp`,
+                image: `${registry}/library/${funcName}:tmp`,
                 imagePullPolicy: "IfNotPresent",
                 ports: [{ "containerPort": 9000 }],
+                resources: {
+                  limits: {
+                    cpu: `${fnParams.cpu}`,
+                    memory: `${fnParams.memory}Mi`
+                  }
+                },
                 readinessProbe: {
                   httpGet: {
                     path: '/health',
@@ -306,28 +396,8 @@ class KnativeProvider implements faas.ProviderPlugin {
                 },
                 env: [
                   {
-                    name: 'FAASIT_FUNC_NAME',
-                    value: fnParams.name
-                  },
-                  {
-                    name: 'FAASIT_PROVIDER',
-                    value: 'knative'
-                  },
-                  {
-                    name: 'FAASIT_CODE_DIR',
-                    value: `${funcName}.zip`
-                  },
-                  {
-                    name: 'FAASIT_APP_NAME',
-                    value: normalizeDnsName(p.input.app.$ir.name)
-                  },
-                  {
-                    name: 'FAASIT_WORKFLOW_NAME',
-                    value: normalizeDnsName(p.input.app.$ir.name)
-                  },
-                  {
-                    name: 'REDIS_PORT',
-                    value: '6379'
+                    name: 'FUNC_NAME',
+                    value: fnParams.function_name
                   }
                 ],
                 command: runCommand,
@@ -338,31 +408,6 @@ class KnativeProvider implements faas.ProviderPlugin {
         }
       }
     }
-    // const zipFile = await this.packFuncCode({ codeDir: fnParams.codeDir, fnName: funcName })
-    // // 获取名称包含funcName的pod的名称
-    // const getPodProc = rt.runCommand(`kubectl get pod | grep nginx-file-server | awk '{print $1}'`, {
-    //   cwd: process.cwd(),
-    //   shell: true
-    // })
-    // let podName: string = '';
-    // getPodProc.readOut(v => {
-    //   podName = String(v).replace('\n', '')
-    //   logger.info(`podName: ${podName}`)
-    // })
-    // await getPodProc.wait()
-
-    // logger.info(`Deploy ${zipFile} to Pod ${podName}`)
-    // const cpProc = rt.runCommand(`kubectl cp ${zipFile} ${podName}:/data/uploads`, {
-    //   cwd: process.cwd(),
-    //   shell: true,
-    //   stdio: 'inherit'
-    // })
-    // await Promise.all([
-    //   cpProc.readOut(v => logger.info(v)),
-    //   cpProc.readErr(v => logger.error(v))
-    // ])
-    // await cpProc.wait()
-    // await rt.removeFile(zipFile)
 
     return funcObj
   }
