@@ -39,8 +39,6 @@ class AliyunProvider implements faas.ProviderPlugin {
 						'requirements.txt', 
 						'-t', 
 						'./venv', 
-						'--index-url',
-						'http://localhost:12121',
 						'--upgrade'
 					],  
 					cwd: codeDir ,  

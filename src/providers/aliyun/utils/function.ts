@@ -17,7 +17,7 @@ export class AliyunFunction {
     const accountId = process.env.FAASIT_SECRET_ALIYUN_ACCOUNT_ID
     const version = '24'
     const layer_name = 'ft-rt-py'
-    this.layer = `acs:fc:${region}:${accountId}:layers/${layer_name}/versions/${version}`
+    // this.layer = `acs:fc:${region}:${accountId}:layers/${layer_name}/versions/${version}`
   }
 
   private zipFolderAndEncode() {
@@ -34,7 +34,7 @@ export class AliyunFunction {
     })
     let createFunctionHeaders = new $FC_Open20210406.CreateFunctionHeaders({});
     let createFunctionRequests = new $FC_Open20210406.CreateFunctionRequest({
-      layers: [this.layer],
+      // layers: [this.layer],
       functionName: this.opt.functionName,
       handler: this.opt.handler,
       runtime: this.opt.runtime,
@@ -74,7 +74,7 @@ export class AliyunFunction {
     })
     let headers = new $FC_Open20210406.UpdateFunctionHeaders({});
     let requests = new $FC_Open20210406.UpdateFunctionRequest({
-      layers : [this.layer],
+      // layers : [this.layer],
       functionName: this.opt.functionName,
       handler: this.opt.handler,
       runtime: this.opt.runtime,
