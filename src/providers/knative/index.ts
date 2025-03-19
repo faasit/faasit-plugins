@@ -7,6 +7,9 @@ import path from 'path'
 import AdmZip from 'adm-zip'
 import Docker from 'dockerode'
 import { randomUUID } from 'crypto'
+import * as k8s from '@kubernetes/client-node'
+import {createClient} from 'redis'
+
 
 interface DeployParams {
   ctx: faas.ProviderPluginContext
@@ -106,6 +109,7 @@ class KnativeProvider implements faas.ProviderPlugin {
         stdio: 'inherit'
       })
       await proc.wait()
+      rt.removeFile(`${imageName}.dockerfile`)
       if (registry) {
         await push_image(imageName, registry, ctx)
       }
@@ -131,12 +135,178 @@ class KnativeProvider implements faas.ProviderPlugin {
   
 
   async deploy(input: faas.ProviderDeployInput, ctx: faas.ProviderPluginContext) {
+    async function configRedis() {
+      const kc = new k8s.KubeConfig();
+      kc.loadFromDefault()
+      const k8sApi = kc.makeApiClient(k8s.CoreV1Api)
+      async function cleanRedis() {
+        try {
+          await k8sApi.deleteNamespacedService({name: 'redis-service', namespace: 'default'})
+          ctx.logger.info('Deleting redis-service')
+        } catch (err) {
+          ctx.logger.info("redis-service not found")
+        }
+  
+        try {
+          await k8sApi.deleteNamespacedPod({name: 'redis-pod', namespace: 'default'})
+          ctx.logger.info('Deleting redis-pod')
+        } catch (err) {
+          ctx.logger.info("redis-pod not found")
+        }
+  
+        while(true) {
+          try {
+            await k8sApi.readNamespacedService({name: 'redis-service', namespace:'default'})
+            ctx.logger.info('Waiting for redis-service to be deleted')
+            await new Promise(resolve => setTimeout(resolve, 1000))
+          } catch (err) {
+            ctx.logger.info("redis-service deleted")
+            break
+          }
+        }
+  
+        while(true) {
+          try {
+            await k8sApi.readNamespacedPod({name: 'redis-pod', namespace:'default'})
+            ctx.logger.info('Waiting for redis-pod to be deleted')
+            await new Promise(resolve => setTimeout(resolve, 1000))
+          } catch (err) {
+            ctx.logger.info("redis-pod deleted")
+            break
+          }
+        }
+        
+      }
+      await cleanRedis()
+      const provider = input.provider
+      if (!provider.output.redis_data) {
+        return;
+      }
+      const redis_data = provider.output.redis_data
+  
+      async function create_redis_pod() {
+        const redis_pod: k8s.V1Pod = {
+          metadata: {
+            name: 'redis-pod',
+            labels: {
+              app: 'redis'
+            },
+            namespace: 'default'
+          },
+          spec: {
+            containers: [
+              {
+                name: 'redis-pod',
+                image: 'redis',
+                imagePullPolicy: 'IfNotPresent'
+              }
+            ]
+          }
+        }
+        try {
+          await k8sApi.createNamespacedPod({namespace: 'default', body: redis_pod})
+          ctx.logger.info('Creating redis-pod')
+        } catch (err) {
+          ctx.logger.error(err)
+          throw err
+        }
+      }
+  
+      async function create_redis_service() {
+        const redis_service: k8s.V1Service = {
+          metadata: {
+            name: 'redis-service',
+            namespace: 'default'
+          },
+          spec: {
+            selector: {
+              app: 'redis'
+            },
+            ports: [
+              {
+                port: 6379,
+              }
+            ], 
+            externalIPs: ['10.0.0.100']
+          }
+        }
+        try {
+          await k8sApi.createNamespacedService({namespace: 'default', body: redis_service})
+          ctx.logger.info('Creating redis-service')
+        } catch (err) {
+          ctx.logger.error(err)
+          throw err
+        }
+      }
+  
+      async function load_redis_data() {
+        ctx.logger.info(`Loading redis data from ${redis_data}`)
+        const redis_data_path = path.resolve(redis_data)
+        const redisClient = createClient({
+          // url: 'redis://10.0.0.100:6379',
+          socket: {
+            host: '10.0.0.100',
+            port: 6379,
+            reconnectStrategy: function(times) {
+              ctx.logger.error(`Reconnecting to redis, times=${times}`)
+              return Math.min(times * 50, 2000)
+            }
+          }
+        }).on('error', (err) => {
+          ctx.logger.error(err)
+        })
+        try {
+          await redisClient.connect()
+          ctx.logger.info('Connected to redis')
+        } catch (err) {
+          ctx.logger.error(err)
+          throw err
+        }
+        try {
+          const files = fs.readdirSync(redis_data_path)
+          files.map((file) => {
+            const key = path.join(redis_data_path, file)
+            const val = fs.readFileSync(key, {encoding: 'utf-8'})
+            redisClient.SET(file, Buffer.from(val, 'utf-8'))
+          })
+        } catch (err) {
+          ctx.logger.error(err)
+          throw err
+        }
+        await redisClient.quit()
+        ctx.logger.info('Loaded redis data')
+      }
+  
+      await create_redis_pod()
+      await create_redis_service()
+      while(true) {
+        try {
+          await k8sApi.readNamespacedPod({name: 'redis-pod', namespace:'default'})
+          ctx.logger.info("redis-pod created")
+          break
+        } catch (err) {
+          ctx.logger.info('Waiting for redis-pod to be created')
+          await new Promise(resolve => setTimeout(resolve, 1000))
+        }
+      }
+      while(true) {
+        try {
+          await k8sApi.readNamespacedService({name: 'redis-service', namespace:'default'})
+          ctx.logger.info("redis-service created")
+          break
+        } catch (err) {
+          ctx.logger.info('Waiting for redis-service to be created')
+          await new Promise(resolve => setTimeout(resolve, 1000))
+        }
+      }
+      await load_redis_data()
+    }
+    await configRedis()
     if (faas.isWorkflowApplication(input.app)) {
       return this.deployWorkflowApp({ ctx, input }, input.app)
     }
     return this.deployFunctionApp({ ctx, input })
   }
-
   async invoke(input: faas.ProviderInvokeInput, ctx: faas.ProviderPluginContext) {
     const { rt, logger } = ctx
     const { app } = input
@@ -172,7 +342,7 @@ class KnativeProvider implements faas.ProviderPlugin {
     const router = getRouter()
     const namespace = app.$ir.name
     const type = 'invoke'
-    const params = input.input
+    const params = input.input ? input.input : {}
 
     const svcName = getSvcName()
     // const svcName = `${app.$ir.name}-${input.funcName}`

@@ -21,6 +21,7 @@
     "@aws-sdk/client-lambda": "^3.478.0",
     "@faasit/core": "workspace:^",
     "@faasit/std": "workspace:^",
+    "@kubernetes/client-node": "^1.1.0",
     "adm-zip": "^0.5.10",
     "axios": "^1.4.0",
     "dockerode": "^3.3.5",
@@ -28,6 +29,7 @@
     "globby": "^13.2.2",
     "ignore": "^5.2.4",
     "js-yaml": "^4.1.0",
+    "redis": "^4.7.0",
     "tencentcloud-sdk-nodejs-scf": "^4.0.713",
     "zod": "^3.21.4"
   },
@@ -66,7 +68,7 @@
       "require": "./dist/providers/tencentyun.cjs",
       "import": "./dist/providers/tencentyun.mjs"
     },
-    "./providers/k8s":{
+    "./providers/k8s": {
       "require": "./dist/providers/k8s.cjs",
       "import": "./dist/providers/k8s.mjs"
     },
