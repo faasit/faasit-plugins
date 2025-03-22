@@ -123,6 +123,9 @@ class KnativeProvider implements faas.ProviderPlugin {
       for (const fnRef of app.output.workflow.value.output.functions) {
         build_function_image(fnRef.value)
       }
+      const codeDir = app.output.workflow.value.output.codeDir
+      const imageName = `${app_name}-${app.output.workflow.value.$ir.name}:tmp`
+      build_docker_image(image, imageName, codeDir, ctx, registry)
     } else {
       for (const fnRef of app.output.functions) {
         build_function_image(fnRef.value);
