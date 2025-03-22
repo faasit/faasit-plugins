@@ -12,7 +12,8 @@ interface stage {
     }
     image: string,
     codeDir: string,
-    replicas: number
+    replicas: number,
+    handler: string
 }
 
 class PKUProvider implements faas.ProviderPlugin {
@@ -204,6 +205,8 @@ class PKUProvider implements faas.ProviderPlugin {
             let port: number = 10000
             for (const stage of stages) {
                 const _stage_generator = () => {
+                    const file_name = stage.handler.split('.')[0]
+                    const func_name = stage.handler.split('.')[1]
                     return {
                         request: {
                             vcpu: stage.request.vcpu
@@ -220,7 +223,7 @@ class PKUProvider implements faas.ProviderPlugin {
                         image: stage.image,
                         codeDir: stage.codeDir,
                         command: '["/bin/bash"]',
-                        args: `["-c", "cd / && PYTHONPATH=/code:$PYTHONPATH python3 -m serverless_framework.worker /code/index.py handler --port __worker-port__ --parallelism __parallelism__ --cache_server_port __cache-server-port__ --debug"]`
+                        args: `["-c", "cd / && PYTHONPATH=/code:$PYTHONPATH python3 -m serverless_framework.worker /code/${file_name}.py ${func_name} --port __worker-port__ --parallelism __parallelism__ --cache_server_port __cache-server-port__ --debug"]`
                     }
                 }
                 if (stage.replicas > 1) {
@@ -254,13 +257,15 @@ class PKUProvider implements faas.ProviderPlugin {
     
         }
         async function deploy_workflow_app() {
-            async function python_generate_dag(codeDir:string, ctx: faas.ProviderPluginContext) {
+            async function python_generate_dag(handler:string, codeDir:string, ctx: faas.ProviderPluginContext) {
+                const file_name = handler.split('.')[0]
+                const func_name = handler.split('.')[1]
                 const pythonCode = `
 import json
 import os
 os.environ["FAASIT_PROVIDER"]="pku"
-from index import handler
-output = handler()
+from ${file_name} import ${func_name}
+output = ${func_name}()
 print(output)
             `.trim() 
                 const proc = ctx.rt.runCommand(`python`, {
@@ -298,7 +303,8 @@ print(output)
                     },
                     image: `${job_name}:tmp`,
                     codeDir: app.output.workflow.value.output.codeDir,
-                    replicas: 1
+                    replicas: 1,
+                    handler: 'handler'
                 }
                 stages.push(stage)
             } else {
@@ -308,11 +314,12 @@ print(output)
                     const stage: stage = {
                         name: fn.$ir.name,
                         request: {
-                            vcpu: fn.output.resource? parseFloat(fn.output.resource.cpu) : 1
+                            vcpu: fn.output.resource?.cpu? fn.output.resource.cpu : 1
                         },
                         image: fn_image_name,
                         codeDir: fn.output.codeDir,
-                        replicas: fn.output.replicas? fn.output.replicas:1
+                        replicas: fn.output.replicas? fn.output.replicas:1,
+                        handler: fn.output.handler? fn.output.handler: 'index.handler'
                     }
                     stages.push(stage)
                 }
@@ -322,7 +329,8 @@ print(output)
             if (runtime == 'nodejs') {
                 dag_yaml = await this.node_generate_dag(job_name, ctx)
             } else {
-                dag_yaml = await python_generate_dag(app.output.workflow.value.output.codeDir, ctx) 
+                const handler = app.output.workflow.value.output.handler
+                dag_yaml = await python_generate_dag(handler?handler:"index.handler" ,app.output.workflow.value.output.codeDir, ctx) 
             }
             app_yaml = app_yaml + '\n' + dag_yaml
             await rt.writeFile(`${app.$ir.name}.yaml`, app_yaml)
@@ -336,11 +344,12 @@ print(output)
                 const stage: stage = {
                     name: fn.$ir.name,
                     request: {
-                        vcpu: fn.output.resource? parseInt(fn.output.resource.cpu) : 1
+                        vcpu: fn.output.resource?.cpu? fn.output.resource.cpu : 1
                     },
                     image: fn_image_name,
                     codeDir: fn.output.codeDir,
-                    replicas: fn.output.replicas? fn.output.replicas:1
+                    replicas: fn.output.replicas? fn.output.replicas:1,
+                    handler: fn.output.handler? fn.output.handler: 'index.handler'
                 }
                 stages.push(stage)
             }
