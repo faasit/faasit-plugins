@@ -49,9 +49,9 @@ class PKUProvider implements faas.ProviderPlugin {
             const fn = fnRef.value
             let fn_image_name:string = ''
             if (app_name) {
-                fn_image_name = `${app_name}-${fn.$ir.name}:tmp`
+                fn_image_name = `${app_name}-${fn.$ir.name.replace(/_/g, '-')}:tmp`
             } else {
-                fn_image_name = `${fn.$ir.name}:tmp`
+                fn_image_name = `${fn.$ir.name.replace(/_/g, '-')}:tmp`
             }
             await this.build_docker_image(image, fn_image_name, fn.output.codeDir, ctx,registry,fastStart)
         }
@@ -232,7 +232,7 @@ class PKUProvider implements faas.ProviderPlugin {
                         stage_profiles[name] = _stage_generator()
                     }
                 } else {
-                    const name = stage.name
+                    const name = stage.name.replace(/_/g, '-')
                     stage_profiles[name] = _stage_generator()
                 }
                 image_coldstart_latency[stage.image] = 2.0
@@ -310,7 +310,7 @@ print(output)
             } else {
                 for (const fnRef of app.output.workflow.value.output.functions) {
                     const fn = fnRef.value
-                    const fn_image_name = `${job_name}-${fn.$ir.name}:tmp`
+                    const fn_image_name = `${job_name}-${fn.$ir.name.replace(/_/g, '-')}:tmp`
                     const stage: stage = {
                         name: fn.$ir.name,
                         request: {

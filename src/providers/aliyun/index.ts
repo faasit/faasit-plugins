@@ -77,7 +77,8 @@ class AliyunProvider implements faas.ProviderPlugin {
 		const client = createClient({ secret })
 		const serviceName = this.getServiceName(input.app)
 
-		const fnName = app.output.workflow ? '__executor' : input.funcName
+		const fnName = input.funcName ? input.funcName : app.$ir.name
+		logger.info(`invoke function ${fnName}`)
 		const aliyunFunc = new AliyunFunction({
 			client,
 			serviceName,
@@ -223,40 +224,57 @@ class AliyunProvider implements faas.ProviderPlugin {
 		const client = createClient({ secret: p.secret })
 		const serviceName = this.getServiceName(app)
 
-		const functionsToDeploy: DeployFunctionParams[] = []
 		for (const fnRef of workflow.functions) {
 			const fn = fnRef.value
-			const codeDir = fn.output.codeDir
-
-			functionsToDeploy.push({
-				name: fnRef.value.$ir.name,
-				codeDir: codeDir || workflow.codeDir,
-				runtime: fn.output.runtime
-			})
-		}
-
-		functionsToDeploy.push({
-			name: '__executor',
-			codeDir: workflow.codeDir,
-			runtime: workflow.runtime
-		})
-
-		for (const func of functionsToDeploy) {
-			const functionName = func.name
-			const codeDir = func.codeDir
+			const functionName = fn.$ir.name
+			logger.info(`deploy function ${fn.$ir.name}`)
 
 			await this.deployOneFunction(
-				p,
-				client,
+				p, 
+				client, 
 				app.$ir.name,
-				serviceName,
+				serviceName, 
 				functionName,
-				codeDir,
-				func.runtime,
-				"index.handler",
-				[]
+				fn.output.codeDir,
+				fn.output.runtime,
+				fn.output.handler? fn.output.handler: "index.handler",
+				fn.output.triggers
 			)
 		}
+		await this.deployOneFunction(
+			p,
+			client,
+			app.$ir.name,
+			serviceName,
+			app.output.workflow.value.$ir.name,
+			workflow.codeDir,
+			workflow.runtime,
+			workflow.handler? workflow.handler: "index.handler",
+			[]
+		)
+
+		// functionsToDeploy.push({
+		// 	name: '__executor',
+		// 	codeDir: workflow.codeDir,
+		// 	runtime: workflow.runtime
+		// })
+
+		// for (const func of functionsToDeploy) {
+		// 	const functionName = func.name
+		// 	const codeDir = func.codeDir
+
+		// 	await this.deployOneFunction(
+		// 		p,
+		// 		client,
+		// 		app.$ir.name,
+		// 		serviceName,
+		// 		functionName,
+		// 		codeDir,
+		// 		func.runtime,
+		// 		"index.handler",
+		// 		[]
+		// 	)
+		// }
 	}
 
 	private getServiceName(app: faas.Application) {
