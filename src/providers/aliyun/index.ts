@@ -77,7 +77,10 @@ class AliyunProvider implements faas.ProviderPlugin {
 		const client = createClient({ secret })
 		const serviceName = this.getServiceName(input.app)
 
-		const fnName = input.funcName ? input.funcName : app.$ir.name
+		const fnName = input.funcName ? input.funcName : app.output.workflow? app.output.workflow.value.$ir.name : app.output.functions.at(0)?.value.$ir.name
+		if (!fnName) {
+			throw new Error("function name is required")
+		}
 		logger.info(`invoke function ${fnName}`)
 		const aliyunFunc = new AliyunFunction({
 			client,
