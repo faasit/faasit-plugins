@@ -39,31 +39,29 @@ function getNormalizedFuncName(app: faas.Application, funcName: string) {
   return `${lowerAppName}-${lowerFuncName}`
 }
 
+async function get_base_image(baseImage: string | undefined): Promise<string> {
+  baseImage = baseImage || 'faasit-runtime';
+  const docker = new Docker();
+  const images = await docker.listImages({
+    filters: {
+      reference: [baseImage]
+    }
+  });
+  if (images.length == 0) {
+    console.warn(`Base image faasit-runtime not found, using default image`)
+    return 'faasit-runtime'
+  }
+  const image_tags = images.flatMap(image => image.RepoTags).sort()
+  return image_tags.at(-1) || baseImage;
+}
 class KnativeProvider implements faas.ProviderPlugin {
   name: string = 'knative'
 
-  async get_base_image(baseImage: string | undefined): Promise<string> {
-    if (baseImage) {
-      return baseImage
-    }
-    const docker = new Docker();
-    const images = await docker.listImages({
-      filters: {
-        reference: ['faasit-runtime']
-      }
-    });
-    if (images.length == 0) {
-      console.warn(`Base image faasit-runtime not found, using default image`)
-      return 'faasit-runtime'
-    }
-    const image_tags = images.flatMap(image => image.RepoTags).sort()
-    return image_tags.at(-1) || 'faasit-runtime';
-  }
 
   async build(input: faas.ProviderBuildInput, ctx: faas.ProviderPluginContext) {
     const { app, provider } = input
     const registry = provider.output.registry? provider.output.registry : '192.168.28.220:5000'
-    const image = await this.get_base_image(undefined)
+    
     const app_name = app.$ir.name
     async function push_image(imageName: string, registry: string, ctx: faas.ProviderPluginContext) {
       const { rt, logger } = ctx
@@ -86,6 +84,7 @@ class KnativeProvider implements faas.ProviderPlugin {
       imageName: string,
       codeDir: string,
       ctx: faas.ProviderPluginContext,
+      runtime: string,
       registry?: string
     ) {
       const { rt, logger } = ctx
@@ -94,12 +93,15 @@ class KnativeProvider implements faas.ProviderPlugin {
       build_commands.push(`FROM ${baseImageName}`)
       build_commands.push(`COPY ${codeDir} /code`)
       build_commands.push(`WORKDIR /code`)
-      if (fs.existsSync(path.join(codeDir, 'requirements.txt'))) {
-        build_commands.push(`COPY ${path.join(codeDir, 'requirements.txt')} /requirements.txt`)
-        build_commands.push(`RUN pip install -r /requirements.txt --index-url https://mirrors.aliyun.com/pypi/simple/`)
-      }
-      if (fs.existsSync(path.join(codeDir, 'package.json'))) {
-        build_commands.push(`RUN pnpm install @faasit/runtime`)
+      if (runtime == "python") {
+        if (fs.existsSync(path.join(codeDir, 'requirements.txt'))) {
+          build_commands.push(`COPY ${path.join(codeDir, 'requirements.txt')} /requirements.txt`)
+          build_commands.push(`RUN pip install -r /requirements.txt --index-url https://mirrors.aliyun.com/pypi/simple/`)
+        }
+      } else if (runtime == 'nodejs') {
+        if (fs.existsSync(path.join(codeDir, 'package.json'))) {
+          build_commands.push(`RUN pnpm install @faasit/runtime --registry=https://registry.npmmirror.com/`)
+        }
       }
       const dockerfile = build_commands.join('\n')
       await rt.writeFile(`${imageName}.dockerfile`, dockerfile)
@@ -114,10 +116,12 @@ class KnativeProvider implements faas.ProviderPlugin {
         await push_image(imageName, registry, ctx)
       }
     }
-    function build_function_image(fn: faas.Function) {
+    async function build_function_image(fn: faas.Function) {
       const codeDir = fn.output.codeDir
       const imageName = `${app_name}-${fn.$ir.name}:tmp`
-      return build_docker_image(image, imageName, codeDir, ctx, registry)
+      const runtime = fn.output.runtime
+      const image = runtime == 'python' ? await get_base_image('faasit-runtime') : await get_base_image('faasit-runtime-js')
+      return build_docker_image(image, imageName, codeDir, ctx,runtime, registry)
     }
     if (app.output.workflow) {
       for (const fnRef of app.output.workflow.value.output.functions) {
@@ -125,7 +129,9 @@ class KnativeProvider implements faas.ProviderPlugin {
       }
       const codeDir = app.output.workflow.value.output.codeDir
       const imageName = `${app_name}-${app.output.workflow.value.$ir.name}:tmp`
-      build_docker_image(image, imageName, codeDir, ctx, registry)
+      const runtime = app.output.workflow.value.output.runtime
+      const image = runtime == 'python' ? await get_base_image('faasit-runtime') : await get_base_image('faasit-runtime-js')
+      build_docker_image(image, imageName, codeDir, ctx,runtime, registry)
     } else {
       for (const fnRef of app.output.functions) {
         build_function_image(fnRef.value);
@@ -524,6 +530,12 @@ class KnativeProvider implements faas.ProviderPlugin {
       '--server_port',
       '9000'
     ]
+    if (fnParams.runtime == 'nodejs') {
+      runCommand = ['node']
+      runArgs = [
+        '/app/app.js'
+      ]
+    }
 
     const funcObj = {
       apiVersion: 'serving.knative.dev/v1',
@@ -570,6 +582,10 @@ class KnativeProvider implements faas.ProviderPlugin {
                 env: [
                   {
                     name: 'FUNC_NAME',
+                    value: fnParams.function_name
+                  },
+                  {
+                    name: "FAASIT_FUNC_NAME",
                     value: fnParams.function_name
                   }
                 ],
