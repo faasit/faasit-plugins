@@ -53,7 +53,7 @@ class PKUProvider implements faas.ProviderPlugin {
             } else {
                 fn_image_name = `${fn.$ir.name.replace(/_/g, '-')}:tmp`
             }
-            await this.build_docker_image(image, fn_image_name, fn.output.codeDir, ctx,registry,fastStart)
+            this.build_docker_image(image, fn_image_name, fn.output.codeDir, ctx,registry,fastStart)
         }
 
     }
