@@ -280,7 +280,7 @@ print(output)
                         result += v
                     }),
                     proc.readErr(v => {
-                        console.log(v)
+                        console.log(v.toString())
                     }),
                 ])
                 await proc.wait()
@@ -387,7 +387,9 @@ print(output)
         for (let [key, value] of Object.entries(cmd_args_map)) {
             console.log(`Parse config ${key}=${value}`)
             com_args.push(`--${key}`)
-            com_args.push(value)
+            if (value != "true") {
+                com_args.push(value)
+            }
         }
         const proc = ctx.rt.runCommand(`python`, {
             args: com_args,
