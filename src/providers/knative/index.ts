@@ -275,8 +275,8 @@ class KnativeProvider implements faas.ProviderPlugin {
           const files = fs.readdirSync(redis_data_path)
           files.map((file) => {
             const key = path.join(redis_data_path, file)
-            const val = fs.readFileSync(key, {encoding: 'utf-8'})
-            redisClient.SET(file, Buffer.from(val, 'utf-8'))
+            const val = fs.readFileSync(key)
+            redisClient.SET(file, Buffer.from(val))
           })
         } catch (err) {
           ctx.logger.error(err)
@@ -407,8 +407,8 @@ class KnativeProvider implements faas.ProviderPlugin {
         codeDir: codeDir || workflow.codeDir,
         runtime: fn.output.runtime,
         registry: input.provider.output.registry,
-        cpu: fn.output.resource? Number(fn.output.resource.cpu) : 0.5,
-        memory: fn.output.resource? Number(fn.output.resource.memory) : 128
+        cpu: fn.output.resource?.cpu? Number(fn.output.resource.cpu) : 0.5,
+        memory: fn.output.resource?.memory? Number(fn.output.resource.memory) : 128
       })
     }
 
@@ -423,8 +423,8 @@ class KnativeProvider implements faas.ProviderPlugin {
       codeDir: workflow.codeDir,
       runtime: workflow.runtime,
       registry: input.provider.output.registry,
-      cpu: workflow.resource? Number(workflow.resource.cpu) : 0.5,
-      memory: workflow.resource? Number(workflow.resource.memory) : 128
+      cpu: workflow.resource?.cpu? Number(workflow.resource.cpu) : 0.5,
+      memory: workflow.resource?.memory? Number(workflow.resource.memory) : 128
     })
 
     logger.info(`deploying workflow, functions=${functionsToDeploy.length}`)
@@ -478,8 +478,8 @@ class KnativeProvider implements faas.ProviderPlugin {
         codeDir: codeDir,
         runtime: fn.output.runtime,
         registry: p.input.provider.output.registry,
-        cpu: fn.output.resource? Number(fn.output.resource.cpu) : 0.5,
-        memory: fn.output.resource? Number(fn.output.resource.memory) : 128
+        cpu: fn.output.resource?.cpu? Number(fn.output.resource.cpu) : 0.5,
+        memory: fn.output.resource?.memory? Number(fn.output.resource.memory) : 128
       })
     }
 
