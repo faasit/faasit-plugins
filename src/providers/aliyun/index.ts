@@ -105,7 +105,12 @@ class AliyunProvider implements faas.ProviderPlugin {
 				ALIBABA_CLOUD_OSS_REGION: process.env.ALIBABA_CLOUD_OSS_REGION, // oss-cn-hangzhou
 			}
 		})
-		const resp = await aliyunFunc.invoke(input.input)
+		let options: {[key: string]: string} = {}
+		if (input.provider.output.invoke) {
+			options = input.provider.output.invoke
+		}
+		const timeout = options['timeout'] ? parseInt(options['timeout']) : undefined
+		const resp = await aliyunFunc.invoke(input.input,timeout)
 		logger.info("function invoke results:");
 		console.log(resp?.body.toString());
 	}
@@ -119,7 +124,9 @@ class AliyunProvider implements faas.ProviderPlugin {
 		codeDir: string,
 		runtime: string,
 		handler: string,
-		triggers: any[]) {
+		triggers: any[],
+		cpu?: number,
+		memory? : number) {
 		const service = new AliyunService({ client, serviceName });
 		const getServiceResp = await service.get()
 		if (!getServiceResp) {
@@ -152,6 +159,10 @@ class AliyunProvider implements faas.ProviderPlugin {
 				ALIBABA_CLOUD_OSS_BUCKET_NAME: process.env.ALIBABA_CLOUD_OSS_BUCKET_NAME, // faasit
 				ALIBABA_CLOUD_OSS_REGION: process.env.ALIBABA_CLOUD_OSS_REGION, // oss-cn-hangzhou
 				PYTHONPATH: '/code/venv'
+			},
+			resource: {
+				cpu: cpu,
+				memory: memory
 			}
 		})
 		await func.get().then(async getFunctionResp => {
@@ -210,7 +221,9 @@ class AliyunProvider implements faas.ProviderPlugin {
 				fn.output.codeDir,
 				fn.output.runtime,
 				fn.output.handler? fn.output.handler : "index.handler",
-				fn.output.triggers
+				fn.output.triggers,
+				fn.output.resource?.cpu,
+				fn.output.resource?.memory
 			)
 
 			logger.info(`aliyun deployed function ${functionName}`)
@@ -241,7 +254,9 @@ class AliyunProvider implements faas.ProviderPlugin {
 				fn.output.codeDir,
 				fn.output.runtime,
 				fn.output.handler? fn.output.handler: "index.handler",
-				fn.output.triggers
+				fn.output.triggers,
+				fn.output.resource?.cpu,
+				fn.output.resource?.memory
 			)
 		}
 		await this.deployOneFunction(
@@ -253,7 +268,9 @@ class AliyunProvider implements faas.ProviderPlugin {
 			workflow.codeDir,
 			workflow.runtime,
 			workflow.handler? workflow.handler: "index.handler",
-			[]
+			[],
+			workflow.resource?.cpu,
+			workflow.resource?.memory
 		)
 
 		// functionsToDeploy.push({

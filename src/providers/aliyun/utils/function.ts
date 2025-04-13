@@ -11,7 +11,11 @@ export class AliyunFunction {
     codeDir: string,
     runtime: string,
     handler: string,
-    env?: { [key: string]: any }
+    env?: { [key: string]: any },
+    resource? :{
+      cpu?: number,
+      memory?:number,
+    }
   }) {
     const region = 'cn-hangzhou'
     const accountId = process.env.FAASIT_SECRET_ALIYUN_ACCOUNT_ID
@@ -32,6 +36,13 @@ export class AliyunFunction {
     let code = new $FC_Open20210406.Code({
       zipFile: this.zipFolderAndEncode(),
     })
+    let cpu = this.opt.resource?.cpu || 0.05
+    let memory = this.opt.resource?.memory || 128
+    if (memory / 1024 / cpu > 4) {
+      cpu = memory / 1024 / 4
+    } else if (memory / 1024 / cpu < 1) {
+      cpu = memory / 1024
+    }
     let createFunctionHeaders = new $FC_Open20210406.CreateFunctionHeaders({});
     let createFunctionRequests = new $FC_Open20210406.CreateFunctionRequest({
       // layers: [this.layer],
@@ -39,7 +50,11 @@ export class AliyunFunction {
       handler: this.opt.handler,
       runtime: this.opt.runtime,
       code: code,
-      environmentVariables: this.opt.env
+      environmentVariables: this.opt.env,
+      memorySize: memory,
+      cpu: cpu,
+      diskSize: 512,
+      timeout: 100
     });
     let runtime = new $Util.RuntimeOptions({
       connectTimeout: 10000
@@ -73,13 +88,36 @@ export class AliyunFunction {
       zipFile: this.zipFolderAndEncode()
     })
     let headers = new $FC_Open20210406.UpdateFunctionHeaders({});
+    let cpu = this.opt.resource?.cpu || 0.05
+    let memory = this.opt.resource?.memory || 128
+    if (memory / 1024 / cpu > 4) { // cpu 太小
+      // cpu 的值必须是0.05的倍数
+      const cpu_min = memory / 1024 / 4
+      if (cpu_min < 0.05) {
+        cpu = 0.05
+      } else {
+        cpu = Math.ceil(cpu_min / 0.05) * 0.05
+      }
+    } else if (memory / 1024 / cpu < 1) { // cpu 太大
+      // cpu 的值必须是0.05的倍数
+      const cpu_max = memory / 1024
+      if (cpu_max < 0.05) {
+        cpu = 0.05
+      } else {
+        cpu = Math.floor(cpu_max / 0.05) * 0.05
+      }
+    }
     let requests = new $FC_Open20210406.UpdateFunctionRequest({
       // layers : [this.layer],
       functionName: this.opt.functionName,
       handler: this.opt.handler,
       runtime: this.opt.runtime,
       code: code,
-      environmentVariables: this.opt.env
+      environmentVariables: this.opt.env,
+      memorySize: memory,
+      cpu: cpu,
+      diskSize: 512,
+      timeout: 100
     });
     let runtime = new $Util.RuntimeOptions({
       connectTimeout: 10000
@@ -97,12 +135,20 @@ export class AliyunFunction {
     }
   }
 
-  async invoke(event: any): Promise<$FC_Open20210406.InvokeFunctionResponse | undefined> {
+  async invoke(event: any, timeout: undefined | number): Promise<$FC_Open20210406.InvokeFunctionResponse | undefined> {
+    if (timeout === undefined) {
+      timeout = 3000
+    }
     let invokeFunctionRequests = new $FC_Open20210406.InvokeFunctionRequest({
       body: event ? Util.toBytes(JSON.stringify(event)) : Util.toBytes(JSON.stringify({}))
     });
+    let invokeFunctionHeaders = new $FC_Open20210406.InvokeFunctionHeaders({
+    });
+    let runtime = new $Util.RuntimeOptions({
+      readTimeout: timeout,
+    });
     try {
-      const resp = await this.opt.client.invokeFunction(this.opt.serviceName, this.opt.functionName, invokeFunctionRequests);
+      const resp = await this.opt.client.invokeFunctionWithOptions(this.opt.serviceName, this.opt.functionName, invokeFunctionRequests, invokeFunctionHeaders, runtime);
       return resp;
     } catch (error) {
       throw error;
