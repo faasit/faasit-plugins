@@ -3,8 +3,11 @@ import * as Trigger from "./utils/trigger";
 import { AliyunFunction, AliyunService, AliyunTrigger, AliyunSecretType, parseAliyunSecret } from './utils'
 import { createClient } from './utils/client';
 import Client from '@alicloud/fc-open20210406';
+import FC_Open20210406, * as $FC_Open20210406 from '@alicloud/fc-open20210406'
+import Util, * as $Util from '@alicloud/tea-util'
 import fs from 'fs'
 import path from 'path';
+import AdmZip from 'adm-zip';
 
 
 interface DeployParams {
@@ -62,7 +65,52 @@ class AliyunProvider implements faas.ProviderPlugin {
 		const { rt, logger } = ctx
 		const { app } = input
 		const secret = parseAliyunSecret(ctx.env)
-
+	 	async function deploy_layer() {
+			const client = createClient({ secret })
+			if (input.provider.output.deploy) {
+				const requirements = input.provider.output.deploy['requirements']
+				if (requirements === undefined) {
+					return;
+				}
+				const createLayerVersionHeaders = new $FC_Open20210406.CreateLayerVersionHeaders({});
+				const runtime = new $Util.RuntimeOptions({})
+				for (const requirement of requirements) {
+					const proc = rt.runCommand('pip', {
+						args:[
+							'install', 
+							requirement, 
+							'-t', 
+							`./${requirement}`, 
+						],  
+						cwd: process.cwd(),  
+						stdio: 'inherit' 
+					})
+					await proc.wait()
+					const codeDir = path.join(process.cwd(), requirement)
+					const zip = new AdmZip();
+					zip.addLocalFolder(requirement);
+					const zipBuffer = zip.toBuffer();
+					const base64 = zipBuffer.toString('base64');
+					logger.info(`deploy layer ${requirement}`)
+					const code = new $FC_Open20210406.Code({
+						zipFile: base64
+					})
+					const createLayerVersionRequest = new $FC_Open20210406.CreateLayerVersionRequest({
+						code: code,
+						compatibleRuntime: ['python3.10'],
+					});
+					try {
+						await client.createLayerVersionWithOptions(requirement,createLayerVersionRequest, createLayerVersionHeaders, runtime)	
+					} catch (error) {
+						console.warn(error.message)
+						console.log(error.data['Recommend'])
+					}
+				}
+			}
+		}
+		// 这种方法限制上传大小，遂放弃
+		// const resp = await deploy_layer()
+		// console.log(resp)
 		if (faas.isWorkflowApplication(app)) {
 			return this.deployWorkflowApp({ ctx, input, secret }, app)
 		} else {
@@ -103,7 +151,8 @@ class AliyunProvider implements faas.ProviderPlugin {
 				// OSS
 				ALIBABA_CLOUD_OSS_BUCKET_NAME: process.env.ALIBABA_CLOUD_OSS_BUCKET_NAME, // faasit
 				ALIBABA_CLOUD_OSS_REGION: process.env.ALIBABA_CLOUD_OSS_REGION, // oss-cn-hangzhou
-			}
+			},
+			requirements: []
 		})
 		let options: {[key: string]: string} = {}
 		if (input.provider.output.invoke) {
@@ -138,6 +187,13 @@ class AliyunProvider implements faas.ProviderPlugin {
 		if (runtime.includes('nodejs')) {
 			runtime = 'nodejs16'
 		}
+		let layers:string[] = []
+		if (p.input.provider.output.deploy) {
+			const requirements = p.input.provider.output.deploy['requirements']
+			for (const requirement of requirements) {
+				layers.push(requirement)
+			}
+		}
 		let func = new AliyunFunction({
 			client,
 			serviceName,
@@ -163,7 +219,8 @@ class AliyunProvider implements faas.ProviderPlugin {
 			resource: {
 				cpu: cpu,
 				memory: memory
-			}
+			},
+			requirements: layers
 		})
 		await func.get().then(async getFunctionResp => {
 			if (getFunctionResp) {

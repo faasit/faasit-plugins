@@ -15,7 +15,8 @@ export class AliyunFunction {
     resource? :{
       cpu?: number,
       memory?:number,
-    }
+    },
+    requirements: string[],
   }) {
     const region = 'cn-hangzhou'
     const accountId = process.env.FAASIT_SECRET_ALIYUN_ACCOUNT_ID
@@ -31,6 +32,12 @@ export class AliyunFunction {
     const base64 = zipBuffer.toString('base64');
     return base64;
   }
+  private transToLayers(requirement: string) {
+    const region = 'cn-hangzhou'
+    const accountId = process.env.FAASIT_SECRET_ALIYUN_ACCOUNT_ID
+    const version = '1'
+    return `acs:fc:${region}:${accountId}:layers/${requirement}/versions/${version}`
+  }
 
   async create(): Promise<$FC_Open20210406.CreateFunctionResponse | undefined> {
     let code = new $FC_Open20210406.Code({
@@ -43,9 +50,13 @@ export class AliyunFunction {
     } else if (memory / 1024 / cpu < 1) {
       cpu = memory / 1024
     }
+    let layers: string[] = []
+    for (const requirement of this.opt.requirements) {
+      layers.push(this.transToLayers(requirement))
+    }
     let createFunctionHeaders = new $FC_Open20210406.CreateFunctionHeaders({});
     let createFunctionRequests = new $FC_Open20210406.CreateFunctionRequest({
-      // layers: [this.layer],
+      layers: layers,
       functionName: this.opt.functionName,
       handler: this.opt.handler,
       runtime: this.opt.runtime,
@@ -107,8 +118,12 @@ export class AliyunFunction {
         cpu = Math.floor(cpu_max / 0.05) * 0.05
       }
     }
+    let layers: string[] = []
+    for (const requirement of this.opt.requirements) {
+      layers.push(this.transToLayers(requirement))
+    }
     let requests = new $FC_Open20210406.UpdateFunctionRequest({
-      // layers : [this.layer],
+      layers : layers,
       functionName: this.opt.functionName,
       handler: this.opt.handler,
       runtime: this.opt.runtime,
