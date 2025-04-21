@@ -61,9 +61,28 @@ class PKUProvider implements faas.ProviderPlugin {
     async build(input: faas.ProviderBuildInput, ctx: faas.ProviderPluginContext) {
         const {app,registry,provider} = input
         const {rt, logger} = ctx
-        const startMode = provider.output.deployment?.startMode || 'tradition'
+        const startMode = provider.output.deploy?.startMode || 'tradition'
         const useFastStart:boolean = startMode == 'fast-start'
         logger.info(`Using fast start mode: ${useFastStart}`)
+        if (useFastStart) {
+            for (const fn of input.app.output.functions) {
+                const codeDir = fn.value.output.codeDir
+                if (fs.existsSync(path.join(codeDir, 'requirements.txt'))) {
+                    ctx.rt.runCommand('python', {
+                        args: [
+                            path.dirname(__filename) + '/fast_start.py',
+                            'prepare',
+                            '--file',
+                            'requirements.txt',
+                        ],
+                        stdio: 'inherit',
+                        cwd: codeDir
+                    }   
+                    )
+                }
+            }
+            return 
+        }
         const job_name = app.$ir.name
         if (app.output.workflow) {
             logger.info("Workflow mode")
@@ -99,10 +118,9 @@ class PKUProvider implements faas.ProviderPlugin {
             job_name: job_name,
             setup: `uname -a
             echo "Hello, world!"`,
-            run: `cd ${process.cwd()} && ft invoke`,
-            profile: `cd ${process.cwd()} && ft invoke`
-        }
-        return yaml.dump(spilot_yaml)
+            }
+            stdio: 'inherit'
+       return yaml.dump(spilot_yaml)
     }
 
     
@@ -130,20 +148,12 @@ class PKUProvider implements faas.ProviderPlugin {
         registry?: string,
         useFastStart: boolean = false
     ) {
-        function generate_faststart_code(codeDir:string) {
-            const faststartCode = `${path.dirname(__filename)}/fast_start.py`
-            const dest_py = `${codeDir}/fast_start.py`
-            fs.writeFileSync(dest_py, fs.readFileSync(faststartCode))
-        }
         const {rt,logger} = ctx
         logger.info(`> Building docker image ${imageName}`)
         let build_commands = []
         build_commands.push(`FROM ${baseImageName}`)
         build_commands.push(`COPY ${codeDir} /code`)
         build_commands.push(`WORKDIR /code`)
-        if (useFastStart) {
-            generate_faststart_code(codeDir)
-        }
         if (fs.existsSync(path.join(codeDir, 'requirements.txt'))) {
             build_commands.push(`COPY ${path.join(codeDir, 'requirements.txt')} /requirements.txt`)
             build_commands.push(`RUN pip install -r /requirements.txt --index-url https://mirrors.aliyun.com/pypi/simple/`)
@@ -187,10 +197,38 @@ class PKUProvider implements faas.ProviderPlugin {
         const {app,provider} = input
         const {rt, logger} = ctx
         logger.info("Deploying app to pku")
-        const runtimeClass = provider.output.deployment?.runtimeClass || 'normal'
+        const runtimeClass = provider.output.deploy?.runtimeClass || 'normal'
         logger.info(`Runtime class: ${runtimeClass}`)
-        const startMode = provider.output.deployment?.startMode || 'tradition'
+        const startMode = provider.output.deploy?.startMode || 'tradition'
         logger.info(`Using fast start mode: ${startMode == 'fast-start'}`)
+        if (startMode == 'fast-start') {
+            logger.info("snap checkpoint, skipping deploy")
+            for (const fn of app.output.functions) {
+                const codeDir = fn.value.output.codeDir
+                const handler = fn.value.output.handler ? fn.value.output.handler : 'index.handler'
+                const file_name = handler.split('.')[0]
+                const func_name = handler.split('.')[1]
+                if (!fs.existsSync(path.join(codeDir, 'input'))) {
+                    ctx.rt.writeFile(`${codeDir}/input`, JSON.stringify({}))
+                }
+                ctx.rt.runCommand("python", {
+                    args: [
+                        path.dirname(__filename) + '/fast_start.py',
+                        'checkpoint',
+                        '--file',
+                        `${file_name}.py`,
+                        '--payload',
+                        "input",
+                        '--function',
+                        func_name
+                    ],
+                    stdio: 'inherit',
+                    cwd: codeDir
+            }   )
+            }
+            return
+        }
+
         function generate_app_yaml(app_name:string ,stages: stage[], runtime:string = 'normal') {
             function get_runtime_template(runtime:string) {
                 if (runtime == 'runvk') {
@@ -456,6 +494,24 @@ print(output)
         await proc.wait()
     }
     async invoke(input: faas.ProviderInvokeInput, ctx: faas.ProviderPluginContext) {
+        const {app,provider} = input
+        if (provider.output.deploy?.startMode == 'fast-start') {
+            ctx.logger.info("start from snap, skipping invoke")
+            const restore_mode = provider.output.invoke?.restore_mode || "parallel"
+            const restore_num = provider.output.invoke?.restore_num || "1"
+            ctx.rt.runCommand('python', {
+                args: [
+                    path.dirname(__filename) + '/fast_start.py',
+                    'restore',
+                    '--restore_mode',
+                    restore_mode,
+                    '--restore_num',
+                    restore_num
+                ],
+                stdio: 'inherit'
+            })
+            return
+        }
         if (!faas.isWorkflowApplication(input.app)) {
             await this.invokeFunction(input, ctx)
         } else {
