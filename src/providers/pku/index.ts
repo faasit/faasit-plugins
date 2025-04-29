@@ -70,7 +70,9 @@ class PKUProvider implements faas.ProviderPlugin {
                 if (fs.existsSync(path.join(codeDir, 'requirements.txt'))) {
                     ctx.rt.runCommand('python', {
                         args: [
-                            path.dirname(__filename) + '/fast_start.py',
+                            '-m',
+                            'serverless_framework.controller',
+                            'mitosis',
                             'prepare',
                             '--file',
                             'requirements.txt',
@@ -213,7 +215,9 @@ class PKUProvider implements faas.ProviderPlugin {
                 }
                 ctx.rt.runCommand("python", {
                     args: [
-                        path.dirname(__filename) + '/fast_start.py',
+                        '-m',
+                        'serverless_framework.controller',
+                        'mitosis',
                         'checkpoint',
                         '--file',
                         `${file_name}.py`,
@@ -501,7 +505,9 @@ print(output)
             const restore_num = provider.output.invoke?.restore_num || "1"
             ctx.rt.runCommand('python', {
                 args: [
-                    path.dirname(__filename) + '/fast_start.py',
+                    '-m',
+                    'serverless_framework.controller',
+                    'mitosis',
                     'restore',
                     '--restore_mode',
                     restore_mode,
