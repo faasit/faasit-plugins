@@ -59,7 +59,8 @@ class PKUProvider implements faas.ProviderPlugin {
     }
 
     async build(input: faas.ProviderBuildInput, ctx: faas.ProviderPluginContext) {
-        const {app,registry,provider} = input
+        const {app,provider} = input
+        const registry = input.registry ? input.registry : input.provider.output.registry;
         const {rt, logger} = ctx
         const startMode = provider.output.deploy?.startMode || 'tradition'
         const useFastStart:boolean = startMode == 'fast-start'
