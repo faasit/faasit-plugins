@@ -52,11 +52,11 @@ class AliyunProvider implements faas.ProviderPlugin {
 		}
 		if (app.output.workflow) {
 			for (const fnRef of app.output.workflow.value.output.functions) {
-				buildFunction(fnRef.value)
+				await buildFunction(fnRef.value)
 			}
 		} else {
 			for (const fnRef of app.output.functions) {
-				buildFunction(fnRef.value)
+				await buildFunction(fnRef.value)
 			}
 		}
 	}
