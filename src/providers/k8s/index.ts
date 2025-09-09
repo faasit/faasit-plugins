@@ -123,7 +123,7 @@ class K8sProvider implements faas.ProviderPlugin {
     }
 
     if (app.output.workflow) {
-      for (const fn of app.output.functions) {
+      for (const fn of app.output.workflow.value.output.functions) {
         build_function_image(fn.value)
       }
       const workflowDir = app.output.workflow.value.output.codeDir

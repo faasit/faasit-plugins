@@ -517,7 +517,7 @@ class KnativeProvider implements faas.ProviderPlugin {
     logger.info(`  > deploy function ${fnParams.name}`)
     const registry = fnParams.registry? fnParams.registry : '192.168.28.220:5000'
 
-    const funcName = getNormalizedFuncName(p.input.app, fnParams.name)
+    const funcName = getNormalizedFuncName(p.input.app, fnParams.function_name)
 
     let runCommand: String[] = ['python']
     let runArgs: String[] = [
@@ -526,7 +526,7 @@ class KnativeProvider implements faas.ProviderPlugin {
       '--lambda_file',
       `/code/${fnParams.file}.py`,
       '--function_name',
-      fnParams.function_name,
+      fnParams.name,
       '--server_port',
       '9000'
     ]
