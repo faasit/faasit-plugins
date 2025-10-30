@@ -16,6 +16,31 @@ interface stage {
     handler: string
 }
 
+const distributed_worker_params: string[] = [
+    "multi_config_path",
+    "repeat",
+    "debug",
+    "transmode",
+    "ditto_placement",
+    "launch",
+    "failure_tolerance",
+    "getoutputs",
+    "remote_call_timeout",
+    "post_ratio",
+    "knative",
+    "redis_wait_time",
+    "redis_yaml",
+    "redis_secret_yaml",
+    "redis_num",
+    "redis_port",
+    "redis_password",
+    "runtime",
+    "cpu_schedule",
+    "jolteon",
+    "jolteon_cost",
+    "jolteon_latency",
+]
+
 class PKUProvider implements faas.ProviderPlugin {
     name: string = 'pku'
 
@@ -246,6 +271,10 @@ class PKUProvider implements faas.ProviderPlugin {
             let stage_profiles: { [key: string]: any } = {};
             let image_coldstart_latency: { [key: string]: number } = {};
             let port: number = 10000
+            let worker = 'worker'
+            if (provider.output.deploy?.worker) {
+                worker = provider.output.deploy.worker
+            }
             for (const stage of stages) {
                 const _stage_generator = () => {
                     const file_name = stage.handler.split('.')[0]
@@ -266,7 +295,7 @@ class PKUProvider implements faas.ProviderPlugin {
                         image: stage.image,
                         codeDir: stage.codeDir,
                         command: '["/bin/bash"]',
-                        args: `["-c", "cd / && PYTHONPATH=/code:$PYTHONPATH python3 -m serverless_framework.worker /code/${file_name}.py ${func_name} --port __worker-port__ --parallelism __parallelism__ --cache_server_port __cache-server-port__ --debug"]`
+                        args: `["-c", "cd / && PYTHONPATH=/code:$PYTHONPATH python3 -m serverless_framework.${worker} /code/${file_name}.py ${func_name} --port __worker-port__ --parallelism __parallelism__ --cache_server_port __cache-server-port__ --debug"]`
                     }
                 }
                 if (stage.replicas > 1) {
@@ -418,9 +447,13 @@ print(output)
             'transmode': 'allTCP',
             'profile': `${process.cwd()}/${app.$ir.name}.yaml`
         }
+        let controller = 'controller';
+        if (provider.output.invoke?.controller) {
+            controller = provider.output.invoke.controller
+        }
         let com_args = [
             '-m',
-            'serverless_framework.controller',
+            `serverless_framework.${controller}`,
         ]
         if (provider.output.invoke) {
             for (let [key,value] of Object.entries(provider.output.invoke)) {
@@ -428,12 +461,15 @@ print(output)
             }
         }
         for (let [key, value] of Object.entries(cmd_args_map)) {
-            console.log(`Parse config ${key}=${value}`)
-            com_args.push(`--${key}`)
-            if (value != "true") {
-                com_args.push(value)
+            if (distributed_worker_params.includes(key)) {
+                console.log(`Parse config ${key}=${value}`)
+                com_args.push(`--${key}`)
+                if (value != "true") {
+                    com_args.push(value)
+                }
             }
         }
+        console.log("Invoking workflow with args: python ", com_args.join(' '))
         const proc = ctx.rt.runCommand(`python`, {
             args: com_args,
             cwd: ctx.cwd,
