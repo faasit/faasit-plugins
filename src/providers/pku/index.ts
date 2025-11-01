@@ -41,6 +41,30 @@ const distributed_worker_params: string[] = [
     "jolteon_latency",
 ]
 
+const controller_params: string[] = [
+    "transmode",
+    "profile",
+    "repeat",
+    "para",
+    "ditto_placement",
+    "launch",
+    "redis_preload_folder",
+    "debug",
+    "failure_tolerance",
+    "getoutputs",
+    "remote_call_timeout",
+    "redis_wait_time",
+    "post_ratio",
+    "knative",
+    "redis_yaml",
+    "redis_ip",
+    "redis_port",
+    "redis_password",
+    "runtime",
+    "cpu_schedule",
+    "load_balancing",
+]
+
 class PKUProvider implements faas.ProviderPlugin {
     name: string = 'pku'
 
@@ -314,9 +338,7 @@ class PKUProvider implements faas.ProviderPlugin {
                 app_name: app_name,
                 template: get_runtime_template(runtime),
                 node_resources: {
-                    cloud: {
-                        vcpu: 20
-                    }
+                    vcpu: 20
                 },
                 image_coldstart_latency: image_coldstart_latency,
                 knative_template: `${path.dirname(__filename)}/knative-template.yaml`,
@@ -448,8 +470,14 @@ print(output)
             'profile': `${process.cwd()}/${app.$ir.name}.yaml`
         }
         let controller = 'controller';
-        if (provider.output.invoke?.controller) {
-            controller = provider.output.invoke.controller
+        if (provider.output.invoke) {
+            const invoke = provider.output.invoke;
+            if (invoke.controller) {
+                controller = invoke.controller
+            }
+            if (!invoke.redis_yaml) {
+                cmd_args_map['redis_yaml'] = `${path.dirname(__filename)}/redis.yaml`
+            }
         }
         let com_args = [
             '-m',
@@ -461,7 +489,13 @@ print(output)
             }
         }
         for (let [key, value] of Object.entries(cmd_args_map)) {
-            if (distributed_worker_params.includes(key)) {
+            if (controller == "distributed_controller" && distributed_worker_params.includes(key)) {
+                console.log(`Parse config ${key}=${value}`)
+                com_args.push(`--${key}`)
+                if (value != "true") {
+                    com_args.push(value)
+                }
+            } else if (controller == "controller" && controller_params.includes(key)) {
                 console.log(`Parse config ${key}=${value}`)
                 com_args.push(`--${key}`)
                 if (value != "true") {
