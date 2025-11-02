@@ -306,51 +306,58 @@ class K8sProvider implements faas.ProviderPlugin {
     }
     await configRedis()
     let port: number = 10000
-    async function deploy_function(fnParams: DeployFunctionParams): Promise<any> {
+    async function deploy_function(fnParams: DeployFunctionParams, replicas: number | null = null): Promise<any> {
       const {rt, logger} = ctx
       const kc = new k8s.KubeConfig();
       kc.loadFromDefault()
       const k8sApi = kc.makeApiClient(k8s.CoreV1Api)
       const funcName = fnParams.function_name
       const app_name = input.app.$ir.name
-      const pod_name_and_svc_name = `${app_name}-${fnParams.name}`
-      try {
-        await k8sApi.deleteNamespacedService({ name: pod_name_and_svc_name, namespace: 'default' })
-        logger.info(`Deleting service ${pod_name_and_svc_name}`)
-      } catch (err) {
-        logger.info(`Service ${pod_name_and_svc_name} not found`)
-      }
-
-      try {
-        await k8sApi.deleteNamespacedPod({ name: pod_name_and_svc_name, namespace: 'default' })
-        logger.info(`Deleting pod ${pod_name_and_svc_name}`)
-      } catch (err) {
-        logger.info(`Pod ${pod_name_and_svc_name} not found`)
-      }
-
-      while(true) {
+      async function delete_and_wait_resource(pod_name_and_svc_name: string, type: 'pod' | 'service') {
         try {
-          await k8sApi.readNamespacedService({ name: pod_name_and_svc_name, namespace: 'default' })
-          logger.info(`Waiting for service ${pod_name_and_svc_name} to be deleted`)
-          await new Promise(resolve => setTimeout(resolve, 1000))
+          if (type == 'pod') {
+            await k8sApi.deleteNamespacedPod({ name: pod_name_and_svc_name, namespace: 'default' })
+            logger.info(`Deleting pod ${pod_name_and_svc_name}`)
+          } else {
+            await k8sApi.deleteNamespacedService({ name: pod_name_and_svc_name, namespace: 'default' })
+            logger.info(`Deleting service ${pod_name_and_svc_name}`)
+          }
         } catch (err) {
-          logger.info(`Service ${pod_name_and_svc_name} deleted`)
-          break
+          logger.info(`${type} ${pod_name_and_svc_name} not found`)
+        }
+
+        while(true) {
+          try {
+            if (type == 'pod') {
+              await k8sApi.readNamespacedPod({ name: pod_name_and_svc_name, namespace: 'default' })
+              logger.info(`Waiting for pod ${pod_name_and_svc_name} to be deleted`)
+            } else {
+              await k8sApi.readNamespacedService({ name: pod_name_and_svc_name, namespace: 'default' })
+              logger.info(`Waiting for service ${pod_name_and_svc_name} to be deleted`)
+            }
+            await new Promise(resolve => setTimeout(resolve, 1000))
+          } catch (err) {
+            logger.info(`${type} ${pod_name_and_svc_name} deleted`)
+            break
+          }
         }
       }
-      while(true) {
-        try {
-          await k8sApi.readNamespacedPod({ name: pod_name_and_svc_name, namespace: 'default' })
-          logger.info(`Waiting for pod ${pod_name_and_svc_name} to be deleted`)
-          await new Promise(resolve => setTimeout(resolve, 1000))
-        } catch (err) {
-          logger.info(`Pod ${pod_name_and_svc_name} deleted`)
-          break
+      if (replicas == null) {
+        const pod_name_and_svc_name = `${app_name}-${fnParams.name}`
+        await delete_and_wait_resource(pod_name_and_svc_name, 'service')
+        await delete_and_wait_resource(pod_name_and_svc_name, 'pod')
+      } else {
+        let promises: Promise<any>[] = []
+        for (let i = 0; i < replicas; i++) {
+          const pod_name_and_svc_name = `${app_name}-${fnParams.name}-${i}`
+          promises.push(delete_and_wait_resource(pod_name_and_svc_name, 'service'))
+          promises.push(delete_and_wait_resource(pod_name_and_svc_name, 'pod'))
         }
+        await Promise.all(promises)
       }
 
       const image = `${app_name}-${fnParams.name}:tmp`
-      async function create_pod() {
+      async function create_pod_and_wait(pod_name_and_svc_name: string) {
         const pod: k8s.V1Pod = {
           metadata: {
             name: pod_name_and_svc_name,
@@ -399,9 +406,20 @@ class K8sProvider implements faas.ProviderPlugin {
           logger.error(err)
           throw err
         }
+
+        while(true) {
+          try {
+            await k8sApi.readNamespacedPod({ name: pod_name_and_svc_name, namespace: 'default' })
+            logger.info(`Pod ${pod_name_and_svc_name} created`)
+            break
+          } catch (err) {
+            logger.info(`Waiting for pod ${pod_name_and_svc_name} to be created`)
+            await new Promise(resolve => setTimeout(resolve, 1000))
+          }
+        }
       }
 
-      async function create_service() {
+      async function create_service(pod_name_and_svc_name: string) {
         const serivce: k8s.V1Service = {
           metadata: {
             name: pod_name_and_svc_name
@@ -428,28 +446,30 @@ class K8sProvider implements faas.ProviderPlugin {
           logger.error(err)
           throw err
         }
-      }
-      create_pod()
-      create_service()
-      while(true) {
-        try {
-          await k8sApi.readNamespacedPod({ name: pod_name_and_svc_name, namespace: 'default' })
-          logger.info(`Pod ${pod_name_and_svc_name} created`)
-          break
-        } catch (err) {
-          logger.info(`Waiting for pod ${pod_name_and_svc_name} to be created`)
-          await new Promise(resolve => setTimeout(resolve, 1000))
+
+        while(true) {
+          try {
+            await k8sApi.readNamespacedService({ name: pod_name_and_svc_name, namespace: 'default' })
+            logger.info(`Service ${pod_name_and_svc_name} created`)
+            break
+          } catch (err) {
+            logger.info(`Waiting for service ${pod_name_and_svc_name} to be created`)
+            await new Promise(resolve => setTimeout(resolve, 1000))
+          }
         }
       }
-      while(true) {
-        try {
-          await k8sApi.readNamespacedService({ name: pod_name_and_svc_name, namespace: 'default' })
-          logger.info(`Service ${pod_name_and_svc_name} created`)
-          break
-        } catch (err) {
-          logger.info(`Waiting for service ${pod_name_and_svc_name} to be created`)
-          await new Promise(resolve => setTimeout(resolve, 1000))
+      if (replicas == null) {
+        const pod_name_and_svc_name = `${app_name}-${fnParams.name}`
+        await create_pod_and_wait(pod_name_and_svc_name)
+        await create_service(pod_name_and_svc_name)
+      } else {
+        let promises: Promise<any>[] = []
+        for (let i = 0; i < replicas; i++) {
+          const pod_name_and_svc_name = `${app_name}-${fnParams.name}-${i}`
+          promises.push(create_pod_and_wait(pod_name_and_svc_name))
+          promises.push(create_service(pod_name_and_svc_name))
         }
+        await Promise.all(promises)
       }
     }
 
@@ -457,6 +477,7 @@ class K8sProvider implements faas.ProviderPlugin {
       const handler = fn.output.handler? fn.output.handler: 'index.handler'
       const file = handler.split('.')[0]
       const function_name = handler.split('.')[1]
+      const replicas = fn.output.replicas? fn.output.replicas: null
       deploy_function({
         file: file,
         name: fn.$ir.name,
@@ -465,7 +486,7 @@ class K8sProvider implements faas.ProviderPlugin {
         runtime: fn.output.runtime,
         cpu: fn.output.resource?.cpu? fn.output.resource.cpu: 1,
         memory: fn.output.resource?.memory? fn.output.resource.memory: 128
-      })
+      },replicas)
     }
     const {app} = input
     if (app.output.workflow) {
@@ -525,14 +546,28 @@ class K8sProvider implements faas.ProviderPlugin {
         for (const fnRef of input.app.output.workflow.value.output.functions) {
           const fn = fnRef.value
           const funcName = normalizeDnsName(fn.$ir.name)
-          router[fn.$ir.name] = await get_function_router(funcName)
+          if (fn.output.replicas) {
+            for (let i = 0; i < fn.output.replicas; i++) {
+              const replicaFuncName = `${funcName}-${i}`
+              router[`${fn.$ir.name}-${i}`] = await get_function_router(replicaFuncName)
+            }
+          } else {
+            router[fn.$ir.name] = await get_function_router(funcName)
+          }
         }
         router[input.app.output.workflow.value.$ir.name] = await get_function_router(input.app.output.workflow.value.$ir.name)
       } else {
         for (const fnRef of input.app.output.functions) {
           const fn = fnRef.value
           const funcName = normalizeDnsName(fn.$ir.name)
-          router[fn.$ir.name] = await get_function_router(funcName)
+          if (fn.output.replicas) {
+            for (let i = 0; i < fn.output.replicas; i++) {
+              const replicaFuncName = `${funcName}-${i}`
+              router[`${fn.$ir.name}-${i}`] = await get_function_router(replicaFuncName)
+            }
+          } else {
+            router[fn.$ir.name] = await get_function_router(funcName)
+          }
         }
       }
       return router
