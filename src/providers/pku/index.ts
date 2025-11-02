@@ -7,9 +7,7 @@ import { ir } from '@faasit/core'
 
 interface stage {
     name: string,
-    request: {
-        vcpu: number,
-    }
+    request: { [key: string]: number }
     image: string,
     codeDir: string,
     replicas: number,
@@ -285,6 +283,11 @@ class PKUProvider implements faas.ProviderPlugin {
 
         function generate_app_yaml(app_name:string ,stages: stage[], runtime:string = 'normal') {
             function get_runtime_template(runtime:string) {
+                if (input.provider.output.deploy?.worker) {
+                    if (input.provider.output.deploy.worker == 'distributed_worker') {
+                        return `${path.dirname(__filename)}/distributed_template.yaml`
+                    }
+                }
                 if (runtime == 'runvk') {
                     return `${path.dirname(__filename)}/template_runvk.yaml`
                 } else {
@@ -304,9 +307,7 @@ class PKUProvider implements faas.ProviderPlugin {
                     const file_name = stage.handler.split('.')[0]
                     const func_name = stage.handler.split('.')[1]
                     return {
-                        request: {
-                            vcpu: stage.request.vcpu
-                        },
+                        request: stage.request,
                         input_time: 0,
                         compute_time: 0,
                         output_time: 0,
@@ -337,9 +338,9 @@ class PKUProvider implements faas.ProviderPlugin {
             const app_yaml = {
                 app_name: app_name,
                 template: get_runtime_template(runtime),
-                node_resources: {
-                    vcpu: 20
-                },
+                // node_resources: {
+                //     vcpu: 20
+                // },
                 image_coldstart_latency: image_coldstart_latency,
                 knative_template: `${path.dirname(__filename)}/knative-template.yaml`,
                 vk_template: ``,
@@ -405,11 +406,10 @@ print(output)
                 for (const fnRef of app.output.workflow.value.output.functions) {
                     const fn = fnRef.value
                     const fn_image_name = `${job_name}-${fn.$ir.name.replace(/_/g, '-')}:tmp`
+                    const request: { [key: string]: number } = fn.output.resource? fn.output.resource : {}
                     const stage: stage = {
                         name: fn.$ir.name,
-                        request: {
-                            vcpu: fn.output.resource?.cpu? fn.output.resource.cpu : 1
-                        },
+                        request: request,
                         image: fn_image_name,
                         codeDir: fn.output.codeDir,
                         replicas: fn.output.replicas? fn.output.replicas:1,
