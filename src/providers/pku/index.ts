@@ -100,7 +100,7 @@ class PKUProvider implements faas.ProviderPlugin {
             } else {
                 fn_image_name = `${fn.$ir.name.replace(/_/g, '-')}:tmp`
             }
-            this.build_docker_image(image, fn_image_name, fn.output.codeDir, ctx,registry,fastStart)
+            this.build_docker_image(image, fn_image_name, fn.output.codeDir, ctx,registry,fastStart, fn.output.mount)
         }
 
     }
@@ -196,13 +196,17 @@ class PKUProvider implements faas.ProviderPlugin {
         codeDir:string,
         ctx: faas.ProviderPluginContext, 
         registry?: string,
-        useFastStart: boolean = false
+        useFastStart: boolean = false,
+        mount: string[] = []
     ) {
         const {rt,logger} = ctx
         logger.info(`> Building docker image ${imageName}`)
         let build_commands = []
         build_commands.push(`FROM ${baseImageName}`)
         build_commands.push(`COPY ${codeDir} /code`)
+        for (const _mount of mount) {
+            build_commands.push(`COPY ${_mount} /code`)
+        }
         build_commands.push(`WORKDIR /code`)
         if (fs.existsSync(path.join(codeDir, 'requirements.txt'))) {
             build_commands.push(`COPY ${path.join(codeDir, 'requirements.txt')} /requirements.txt`)
@@ -320,7 +324,7 @@ class PKUProvider implements faas.ProviderPlugin {
                         image: stage.image,
                         codeDir: stage.codeDir,
                         command: '["/bin/bash"]',
-                        args: `["-c", "cd / && PYTHONPATH=/code:$PYTHONPATH python3 -m serverless_framework.${worker} /code/${file_name}.py ${func_name} --port __worker-port__ --parallelism __parallelism__ --cache_server_port __cache-server-port__ --debug"]`
+                        args: `["-c", "cd /code && PYTHONPATH=/code:$PYTHONPATH python3 -m serverless_framework.${worker} /code/${file_name}.py ${func_name} --port __worker-port__ --parallelism __parallelism__ --cache_server_port __cache-server-port__ --debug"]`
                     }
                 }
                 if (stage.replicas > 1) {
