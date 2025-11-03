@@ -10,7 +10,7 @@ interface stage {
     request: { [key: string]: number }
     image: string,
     codeDir: string,
-    replicas: number,
+    replicas: number | undefined,
     handler: string
 }
 
@@ -37,6 +37,7 @@ const distributed_worker_params: string[] = [
     "jolteon",
     "jolteon_cost",
     "jolteon_latency",
+    "k8s_namespace",
 ]
 
 const controller_params: string[] = [
@@ -327,7 +328,7 @@ class PKUProvider implements faas.ProviderPlugin {
                         args: `["-c", "cd /code && PYTHONPATH=/code:$PYTHONPATH python3 -m serverless_framework.${worker} /code/${file_name}.py ${func_name} --port __worker-port__ --parallelism __parallelism__ --cache_server_port __cache-server-port__ --debug"]`
                     }
                 }
-                if (stage.replicas > 1) {
+                if (stage.replicas) {
                     for (let i = 0; i < stage.replicas; i++) {
                         const name = `${stage.name}-${i}`
                         stage_profiles[name] = _stage_generator()
@@ -416,7 +417,7 @@ print(output)
                         request: request,
                         image: fn_image_name,
                         codeDir: fn.output.codeDir,
-                        replicas: fn.output.replicas? fn.output.replicas:1,
+                        replicas: fn.output.replicas,
                         handler: fn.output.handler? fn.output.handler: 'index.handler'
                     }
                     stages.push(stage)
