@@ -285,6 +285,15 @@ class PKUProvider implements faas.ProviderPlugin {
             }
             return
         }
+        const net_opts = provider.output.deploy?.net_opts
+        if (net_opts) {
+            logger.info(`Network opt's Path ${net_opts}`)
+            ctx.rt.runCommand("bash", {
+                args: ["opt.sh"],
+                stdio: "inherit",
+                cwd: net_opts
+            })
+        }
 
         function generate_app_yaml(app_name:string ,stages: stage[], runtime:string = 'normal') {
             function get_runtime_template(runtime:string) {
@@ -325,7 +334,7 @@ class PKUProvider implements faas.ProviderPlugin {
                         image: stage.image,
                         codeDir: stage.codeDir,
                         command: '["/bin/bash"]',
-                        args: `["-c", "cd /code && PYTHONPATH=/code:$PYTHONPATH python3 -m serverless_framework.${worker} /code/${file_name}.py ${func_name} --port __worker-port__ --parallelism __parallelism__ --cache_server_port __cache-server-port__ --debug"]`
+                        args: `["-c", "cd /code && PYTHONPATH=/code:$PYTHONPATH python3 -m serverless_framework.${worker} /code/${file_name}.py ${func_name} --port __worker-port__ --parallelism __parallelism__ --cache_server_port __cache-server-port__ "]`
                     }
                 }
                 if (stage.replicas) {
@@ -579,6 +588,16 @@ print(output)
             ctx.logger.info("start from snap, skipping invoke")
             const restore_mode = provider.output.invoke?.restore_mode || "parallel"
             const restore_num = provider.output.invoke?.restore_num || "1"
+            let com_args = [
+                "-m", "serverless_framework.controller", "mitosis"
+            ]
+            if (provider.output.invoke) {
+                for (let [key,value] of Object.entries(provider.output.invoke)) {
+                    com_args.push(`--${key}`)
+                    com_args.push(value)
+                }
+            }
+            console.log("Invoking workflow with args: python ", com_args.join(' '))
             ctx.rt.runCommand('python', {
                 args: [
                     '-m',
