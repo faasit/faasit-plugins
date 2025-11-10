@@ -369,10 +369,23 @@ class PKUProvider implements faas.ProviderPlugin {
             async function python_generate_dag(handler:string, codeDir:string, ctx: faas.ProviderPluginContext) {
                 const file_name = handler.split('.')[0]
                 const func_name = handler.split('.')[1]
+                const functions = app.output.workflow?.value.output.functions
+                let function_replicas: { [key: string]: number } = {}
+                if (functions) {
+                    for (const fnRef of functions) {
+                        const fn = fnRef.value
+                        const name = fn.$ir.name
+                        const replicas = fn.output.replicas? fn.output.replicas: undefined
+                        if (replicas) {
+                            function_replicas[name] = replicas
+                        }
+                    }
+                }
                 const pythonCode = `
 import json
 import os
 os.environ["FAASIT_PROVIDER"]="pku"
+os.environ["FAASIT_PARAMS"]='${JSON.stringify(function_replicas)}'
 from ${file_name} import ${func_name}
 output = ${func_name}()
 print(output)
